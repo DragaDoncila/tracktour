@@ -14,7 +14,15 @@ authors = [
     { email = "ddoncila@gmail.com", name = "Draga Doncila Pop" },
 ]
 dynamic = ["version"]
-dependencies = []
+dependencies = [
+    "numpy",
+    "scipy",
+    "networkx",
+    "igraph",
+    "tqdm",
+    "pandas",
+    "gurobipy"
+]
 
 [tool.hatch.version]
 path = "src/tracktool/__init__.py"
