@@ -1,6 +1,5 @@
 from functools import partial
 import math
-import os
 import re
 from typing import List, Tuple
 
@@ -472,6 +471,17 @@ class FlowGraph:
                     m.addConstr(sum(node_in) - sum(div_edge) >= sum(div_edge), f'div_{i}')
 
         return m, flow
+    
+    def solve(self, solver='gurobi'):
+        if solver != 'gurobi':
+            raise NotImplementedError("We don't yet support a non-gurobi solver")
+        m, flow_info = self._to_gurobi_model()
+        m.optimize()
+        if m.Status == 2:
+            self.store_solution(m)
+        else:
+            raise RuntimeError(f"Couldn't solve model. Model status: {m.Status}.")
+        
 
     def save_flow_info(self, coords):
         coords['in-app'] = 0

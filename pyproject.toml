@@ -21,7 +21,10 @@ dependencies = [
     "igraph",
     "tqdm",
     "pandas",
-    "gurobipy"
+    "gurobipy",
+    "tifffile", # maybe should be optional?
+    "imagecodecs",
+    "scikit-image"
 ]
 
 [tool.hatch.version]

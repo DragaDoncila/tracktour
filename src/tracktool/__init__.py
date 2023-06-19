@@ -5,7 +5,9 @@ __author__ = "Draga Doncila Pop"
 __email__ = "ddoncila@gmail.com"
 
 from ._flow_graph import FlowGraph
+from ._io_util import load_graph
 
 __all__ = [
-    'FlowGraph'
+    'FlowGraph',
+    'load_graph',
 ]
