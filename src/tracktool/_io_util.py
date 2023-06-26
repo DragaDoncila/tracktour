@@ -70,6 +70,9 @@ def get_centers(segmentation):
             for prop in props:
                 if prop.label in unfound_labels:
                     label_center_mapping[prop.label] = get_medoid(prop)
+            # 0 is not a valid label and would only exist in the dictionary
+            # if some labels required the medoid treatment.
+            label_center_mapping.pop(0, None)
             labels, centers = zip(*label_center_mapping.items())
             centers_of_mass.append(centers)
             all_labels.extend(labels)
