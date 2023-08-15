@@ -1,0 +1,10 @@
+name: tracktool
+display_name: Merge Explorer
+contributions:
+  commands:
+    - id: tracktool.filter_merge_sets
+      title: Filter Merge Sets
+      python_name: tracktool:filter_merge_sets
+  widgets:
+    - command: tracktool.filter_merge_sets
+      display_name: Filter Merge Sets
