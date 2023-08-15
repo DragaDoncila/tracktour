@@ -17,6 +17,9 @@ def _assign_all_track_id(sol):
     nx.set_node_attributes(sol, -1, 'track-id')
     track_id = 1
     for root in roots:
+        if sol.out_degree(root) == 0:
+            sol.nodes[root]['track-id'] = track_id
+            
         for edge_key in nx.edge_dfs(sol, root):
             source, dest = edge_key[0], edge_key[1]
             source_out = sol.out_degree(source)
@@ -32,6 +35,7 @@ def _assign_all_track_id(sol):
                 else:
                     track_id += 1
             sol.nodes[dest]['track-id'] = track_id
+            
         track_id += 1
     return track_id
 
@@ -63,6 +67,6 @@ def get_tracks_from_nxg(nxg: 'nx.DiGraph'):
     parent_connections = _get_parents(sol_node_df, max_id, nxg)
     track_df = sol_node_df[sol_node_df['track-id'] != -1].sort_values(['track-id', 't'])[['track-id', 't', 'y', 'x']]
     parent_connections = {k: list(v) for k, v in parent_connections.items()}
-    track_layer = Tracks(track_df, graph=parent_connections, tail_length=1, name='tracks')
+    track_layer = Tracks(track_df, graph=parent_connections, tail_length=1, name='tracks', metadata={'colors': dict(zip(sol_node_df['track-id'], sol_node_df['color']))})
     track_layer.display_id = True
     return track_layer
