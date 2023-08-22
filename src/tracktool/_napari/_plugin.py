@@ -1,6 +1,9 @@
 from enum import Enum, auto
 import warnings
 from magicgui import magic_factory
+import numpy as np
+from skimage.measure import points_in_poly
+import networkx as nx
 
 # class MERGE_SET(Enum):
 #     # pre-capacity change, pre oracle
@@ -20,6 +23,8 @@ from magicgui import magic_factory
 # def get_layer_from_merge_set(merge_set: MERGE_SET):
 #     if merge_set == MERGE_SET.OG_MERGE:
 #         layer_name = ''
+
+DIMGREY = np.array([0.4, 0.4, 0.4, 1])
 
 class MockEvent:
     def __init__(self, position):
@@ -61,7 +66,6 @@ def filter_merge_sets(graph_layer: 'napari.layers.Graph', merge_id, viewer:'napa
         if layer._type_string == 'graph':
            layer.visible = False
     graph_layer.visible = True
-    viewer.layers.selection.select_only(graph_layer)
      
     # get nxg from graph_layer
     nxg = graph_layer.metadata['nxg']
@@ -78,14 +82,47 @@ def filter_merge_sets(graph_layer: 'napari.layers.Graph', merge_id, viewer:'napa
     dw, widget = viewer.window.add_plugin_dock_widget("napari-arboretum", "Arboretum")
     ev = MockEvent(position)
     widget.show_tree(tracks_layer, ev)
-    
+    viewer.layers.selection.select_only(graph_layer)
+
     
     # if this is the first time we've launched the widget, also add the double-click callback
-    if 'cb' not in graph_layer.metadata:
+    if 'show_cb' not in graph_layer.metadata:
         def show_tree_on_double_click(layer, event):
             tracks_layer = layer.metadata['tracks']
             ev = MockEvent(event.position)
             widget.show_tree(tracks_layer, ev)
+            viewer.layers.selection.select_only(graph_layer)
         dc = graph_layer.mouse_double_click_callbacks.append(show_tree_on_double_click)
-        graph_layer.metadata['cb'] = dc
+        graph_layer.metadata['show_cb'] = dc
+    
+    # also add callback for discoloring bbox nodes as required
+    if 'bbox_cb' not in graph_layer.metadata:
+        def discolor_points_on_dims_change(ev):
+            z_value = viewer.dims.current_step[0]
+            if widget.plotter.has_nodes and 'lineage_bbox' in viewer.layers:
+                # restore face color (where are we keeping it?)
+                if 'old-color' in graph_layer.metadata:
+                    nx.set_node_attributes(nxg, graph_layer.metadata['old-color'], 'color')
+                # store restored color
+                graph_layer.metadata['old-color'] = nx.get_node_attributes(nxg, 'color')
+                
+                shown_at_t = [node.ID for node in widget.plotter._current_nodes if z_value in node.t]
+                points_coords = graph_layer.data.get_coordinates()
+                points_at_t_mask = points_coords[:, 0] == z_value
+                points_at_t = points_coords[points_at_t_mask, 1:]
+                poly = viewer.layers['lineage_bbox'].data[0]
+                poly_points_mask = points_in_poly(points_at_t, poly)
+                nodes_in_poly = graph_layer.data.get_nodes()[points_at_t_mask][poly_points_mask]
+                tids_in_poly_not_in_tree = []
+                for node in nodes_in_poly:
+                    if tid := nxg.nodes[node]['track-id'] not in shown_at_t:
+                        tids_in_poly_not_in_tree.append(tid)
+                
+                # recolor nodes and set face color
+                for tid in tids_in_poly_not_in_tree:
+                    tid_node_color = {node: DIMGREY for node in nxg.nodes if nxg.nodes['track-id'] == tid}
+                    nx.set_node_attributes(nxg, tid_node_color, 'color')
+                graph_layer.face_color = list(nx.get_node_attributes(nxg, "color").values())
+        dc = viewer.dims.events.current_step.connect(discolor_points_on_dims_change)
+        graph_layer.metadata['bbox_cb'] = dc
         
