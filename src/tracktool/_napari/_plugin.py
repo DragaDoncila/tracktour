@@ -44,6 +44,8 @@ class MergeExplorer(Container):
         )
         self._viewer = viewer
         self._lineage_dc = None
+        self._bbox_dc = None
+        self._old_color = None
         
         self._graph_layer_combo = create_widget(annotation="napari.layers.Graph", label='Graph Layer')
         self._merge_id_combo = ComboBox(label="Merged Cells")
@@ -79,9 +81,9 @@ class MergeExplorer(Container):
         self._merge_id_combo.choices = get_choices
     
     def _update_lineage_callback(self):
-        if self._lineage_dc is not None:
-            self._lineage_dc()
         chosen_layer = self._graph_layer_combo.value
+        if self._lineage_dc is not None:
+            chosen_layer.mouse_double_click_callbacks.remove(self._lineage_dc)
         self._lineage_dc = chosen_layer.mouse_double_click_callbacks.append(self._show_lineage_tree)
         
     def _show_lineage_tree(self, layer, event):
@@ -95,6 +97,7 @@ class MergeExplorer(Container):
         # if focus mode is on
         if self._focus_mode_check.value:
             self.color_nodes_in_tree(layer)
+            self.draw_current_bounding_box()
             
     def _show_selected_merge(self):
         merge_id = self._merge_id_combo.value
@@ -122,24 +125,31 @@ class MergeExplorer(Container):
         self._show_lineage_tree(graph_layer, event)
         self._viewer.layers.selection.select_only(graph_layer)
         
+        
     def _handle_focus_mode_change(self):
         chosen_layer = self._graph_layer_combo.value
         if self._focus_mode_check.value:
             self.color_nodes_in_tree(chosen_layer)
+            self._bbox_dc = self._viewer.dims.events.current_step.connect(self.draw_current_bounding_box)
+            self.draw_current_bounding_box()
         else:
-            if "old-color" in chosen_layer.metadata:
+            if self._old_color is not None:
                 nxg = chosen_layer.metadata['nxg']
-                nx.set_node_attributes(nxg, chosen_layer.metadata["old-color"], "color")            
+                nx.set_node_attributes(nxg, self._old_color, "color")            
                 chosen_layer.face_color = list(nx.get_node_attributes(nxg, "color").values())
+            if self._bbox_dc is not None:
+                self._viewer.layers.remove('lineage_bbox')
+                self._viewer.dims.events.current_step.disconnect(self._bbox_dc)
+                self._bbox_dc = None
 
     def color_nodes_in_tree(self, layer=None, ev=None):
         nxg = layer.metadata['nxg']
-        if self._arboretum.plotter.has_nodes:
+        if self._arboretum.plotter.has_plot:
             # restore face color
-            if "old-color" in layer.metadata:
-                nx.set_node_attributes(nxg, layer.metadata["old-color"], "color")
+            if self._old_color is not None:
+                nx.set_node_attributes(nxg, self._old_color, "color")
             # store restored color
-            layer.metadata["old-color"] = nx.get_node_attributes(nxg, "color")
+            self._old_color = nx.get_node_attributes(nxg, "color")
             nx.set_node_attributes(nxg, DIMGREY, "color")
 
             shown_tids = set([node.ID for node in self._arboretum.plotter._current_nodes])
@@ -148,7 +158,7 @@ class MergeExplorer(Container):
             for tid in shown_tids:
                 tid_node_color.update(
                     {
-                        node: layer.metadata["old-color"][node]
+                        node: self._old_color[node]
                         for node in nxg.nodes
                         if nxg.nodes[node]["track-id"] == tid
                     }
@@ -156,3 +166,29 @@ class MergeExplorer(Container):
             nx.set_node_attributes(nxg, tid_node_color, "color")
             layer.face_color = list(nx.get_node_attributes(nxg, "color").values())
 
+    def draw_current_bounding_box(self, event = None):
+        if not self._arboretum.plotter.has_plot:
+            return
+        z_value = self._viewer.dims.current_step[0]
+        shown_at_t = [node for node in self._arboretum.plotter._current_nodes if z_value in node.t]
+        tdata = self._arboretum.tracks.data
+        positions = [np.squeeze(tdata[np.logical_and(tdata[:, 0] == node.ID, tdata[:, 1] == z_value)][:, 2:]) for node in shown_at_t]        
+        min_x, min_y = tuple(positions[0])
+        max_x, max_y = min_x, min_y
+        for position in positions[1:]:
+            if (x := position[0]) < min_x:
+                min_x = x
+            elif (x := position[0]) > max_x:
+                max_x = x
+            
+            if (y := position[1]) < min_y:
+                min_y = y
+            elif (y := position[1]) > max_y:
+                max_y = y 
+        bbox_corners = [(min_x - 10, min_y - 10), (max_x + 10, max_y + 10)]          
+        if 'lineage_bbox' in self._viewer.layers:
+            bbox_layer = self._viewer.layers['lineage_bbox']
+            bbox_layer.data = []
+        else:
+            bbox_layer = self._viewer.add_shapes(name='lineage_bbox')
+        bbox_layer.add_rectangles([bbox_corners], face_color=[(0, 0, 0, 0)], edge_color = [(1, 1, 1, 1)])
