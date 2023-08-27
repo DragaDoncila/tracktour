@@ -6,26 +6,8 @@ from magicgui.widgets import Container, ComboBox, create_widget
 import numpy as np
 import networkx as nx
 
-# class MERGE_SET(Enum):
-#     # pre-capacity change, pre oracle
-#     OG_MERGE = auto()
-#     # pre-capacity change, post oracle
-#     # ORIGINAL_FINAL = auto()
-#     # post-capacity change original merge vertices
-#     OG_NEW = auto()
-#     # post-capacity change, pre oracle
-#     NEW_MERGE = auto()
-#     # post-capacity change, post oracle
-#     # NEW_FINAL = auto()
-#     # post-capacity change new merges
-#     NEW_NEW = auto()
-
-
-# def get_layer_from_merge_set(merge_set: MERGE_SET):
-#     if merge_set == MERGE_SET.OG_MERGE:
-#         layer_name = ''
-
 DIMGREY = np.array([0.4, 0.4, 0.4, 1])
+BBOX_LAYER_NAME = 'Focus Box'
 
 class MockEvent:
     def __init__(self, position):
@@ -64,6 +46,13 @@ class MergeExplorer(Container):
         
     def _update_merge_node_choices(self):
         chosen_layer = self._graph_layer_combo.value
+        # TODO: cleanup on layer delete isn't really working
+        if chosen_layer is None:
+            self._merge_id_combo.choices = []
+            self._focus_mode_check.value = False
+            self._handle_focus_mode_change()
+            return
+        
         if "nxg" in chosen_layer.metadata:
             nxg = chosen_layer.metadata["nxg"]
         else:
@@ -71,7 +60,7 @@ class MergeExplorer(Container):
             chosen_layer.metadata["nxg"] = nxg
 
         def get_choices(_merge_id_combo):
-            merge_nodes = [node for node in nxg.nodes if nxg.in_degree(node) > 1]
+            merge_nodes = [(f'Track {nxg.nodes[node]["track-id"]}, Frame {nxg.nodes[node]["t"]}', node) for node in nxg.nodes if nxg.in_degree(node) > 1]
             if not len(merge_nodes):
                 warnings.warn(
                     f"Graph {chosen_layer.name} contains no merges! Try a different layer."
@@ -82,6 +71,8 @@ class MergeExplorer(Container):
     
     def _update_lineage_callback(self):
         chosen_layer = self._graph_layer_combo.value
+        if chosen_layer is None:
+            return
         if self._lineage_dc is not None:
             chosen_layer.mouse_double_click_callbacks.remove(self._lineage_dc)
         self._lineage_dc = chosen_layer.mouse_double_click_callbacks.append(self._show_lineage_tree)
@@ -101,9 +92,8 @@ class MergeExplorer(Container):
             
     def _show_selected_merge(self):
         merge_id = self._merge_id_combo.value
-        graph_layer = self._graph_layer_combo.value
-        
-        if merge_id is None:
+        graph_layer = self._graph_layer_combo.value        
+        if merge_id is None or graph_layer is None:
             return
         # make this the only visible graph layer
         for layer in self._viewer.layers:
@@ -125,9 +115,11 @@ class MergeExplorer(Container):
         self._show_lineage_tree(graph_layer, event)
         self._viewer.layers.selection.select_only(graph_layer)
         
-        
     def _handle_focus_mode_change(self):
         chosen_layer = self._graph_layer_combo.value
+        if chosen_layer is None:
+            return
+        
         if self._focus_mode_check.value:
             self.color_nodes_in_tree(chosen_layer)
             self._bbox_dc = self._viewer.dims.events.current_step.connect(self.draw_current_bounding_box)
@@ -138,7 +130,7 @@ class MergeExplorer(Container):
                 nx.set_node_attributes(nxg, self._old_color, "color")            
                 chosen_layer.face_color = list(nx.get_node_attributes(nxg, "color").values())
             if self._bbox_dc is not None:
-                self._viewer.layers.remove('lineage_bbox')
+                self._viewer.layers.remove(BBOX_LAYER_NAME)
                 self._viewer.dims.events.current_step.disconnect(self._bbox_dc)
                 self._bbox_dc = None
 
@@ -186,9 +178,9 @@ class MergeExplorer(Container):
             elif (y := position[1]) > max_y:
                 max_y = y 
         bbox_corners = [(min_x - 10, min_y - 10), (max_x + 10, max_y + 10)]          
-        if 'lineage_bbox' in self._viewer.layers:
-            bbox_layer = self._viewer.layers['lineage_bbox']
+        if BBOX_LAYER_NAME in self._viewer.layers:
+            bbox_layer = self._viewer.layers[BBOX_LAYER_NAME]
             bbox_layer.data = []
         else:
-            bbox_layer = self._viewer.add_shapes(name='lineage_bbox')
+            bbox_layer = self._viewer.add_shapes(name=BBOX_LAYER_NAME)
         bbox_layer.add_rectangles([bbox_corners], face_color=[(0, 0, 0, 0)], edge_color = [(1, 1, 1, 1)])
