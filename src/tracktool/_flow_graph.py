@@ -8,13 +8,17 @@ import networkx as nx
 import igraph
 
 from scipy.spatial import KDTree
-from tqdm import tqdm
 import pandas as pd
 import gurobipy as gp
 import time
 
 from ._costs import euclidean_cost_func, dist_to_edge_cost_func, closest_neighbour_child_cost
 
+try:
+    from napari.utils import progress as tqdm
+except ImportError:
+    from tqdm import tqdm
+    
 class FlowGraph:
     APPEARANCE_EDGE_REGEX = re.compile(r"e_a_[0-9]+\.[0-9]+")
     EXIT_EDGE_REGEX = re.compile(r"e_[0-9]+\.[0-9]+_t")
@@ -218,7 +222,7 @@ class FlowGraph:
 
         for i, v in tqdm(
             enumerate(real_nodes),
-            desc="Making appearance/exit edges",
+            desc="Building enter/exit edges",
             total=len(real_nodes),
         ):
             # first frame should be able to appear at no extra cost
@@ -269,7 +273,7 @@ class FlowGraph:
 
         for source_t in tqdm(
             range(self.min_t, self.max_t),
-            desc=f"Making migration & division edges",
+            desc=f"Building frame-to-frame edges",
             total=self.t - 1,
         ):
             dest_t = source_t + 1
