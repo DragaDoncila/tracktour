@@ -1,0 +1,10 @@
+name: tracktool
+display_name: Tracktool
+contributions:
+  commands:
+    - id: tracktool.merge_explorer
+      title: Merge Explorer...
+      python_name: tracktool._napari._plugin:MergeExplorer
+  widgets:
+    - command: tracktool.merge_explorer
+      display_name: Merge Explorer

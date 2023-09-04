@@ -4,6 +4,7 @@ from skimage.graph import pixel_graph, central_pixel
 import glob
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from ._flow_graph import FlowGraph
 
 def load_graph(seg_path):
@@ -58,7 +59,7 @@ def get_centers(segmentation):
     n_frames = segmentation.shape[0]
     centers_of_mass = []
     all_labels = []
-    for i in range(n_frames):
+    for i in tqdm(range(n_frames), desc='Processing frames'):
         current_frame = segmentation[i]
         props = regionprops(current_frame)
         if props:

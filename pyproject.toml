@@ -15,6 +15,8 @@ authors = [
 ]
 dynamic = ["version"]
 dependencies = [
+    "arboretum",
+    "napari",
     "numpy",
     "scipy",
     "networkx",
@@ -25,6 +27,21 @@ dependencies = [
     "tifffile", # maybe should be optional?
     "imagecodecs",
     "scikit-image"
+]
+classifiers = [
+  "Intended Audience :: Science/Research",
+  "Framework :: napari",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Topic :: Scientific/Engineering :: Image Processing",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Topic :: Scientific/Engineering :: Visualization",
+  "Topic :: Scientific/Engineering",
 ]
 
 [tool.hatch.version]
@@ -42,3 +59,6 @@ test = ["pytest>=6.0"]
 [project.urls]
 homepage = "https://github.com/DragaDoncila/tracktool"
 repository = "https://github.com/DragaDoncila/tracktool"
+
+[project.entry-points."napari.manifest"]
+napari-tracktool = "tracktool:napari.yaml"
