@@ -25,6 +25,7 @@ class FlowGraph:
         self,
         im_dim: Tuple[int],
         coords: "pandas.DataFrame",
+        n_neighbours: int = 10,
         min_t=0,
         max_t=None,
         pixel_vals: List[int] = None,
@@ -44,6 +45,10 @@ class FlowGraph:
         coords : DataFrame
             DataFrame with columns 't', 'y', 'x' and optionally 'z' of
             blob center coordinates for which to solve
+        n_neighbours: int
+            Number of neighbours to consider for cell migration in next frame, by
+            default 10. If fewer neighbours are present, all neighbours will be
+            considered.
         min_t: int, optional
             smallest frame number in the image. If missing, will be determined
             from min value of first coordinate of each object in coords
@@ -58,6 +63,7 @@ class FlowGraph:
         self.min_t = min_t or coords["t"].min()
         self.max_t = max_t or coords["t"].max()
         self.t = self.max_t - self.min_t + 1
+        self.k = n_neighbours
         self.im_dim = im_dim
         self.migration_only = migration_only
         self.spatial_cols = ["y", "x"]
@@ -608,8 +614,7 @@ class FlowGraph:
         dest_tree = self._kdt_dict[dest_t]["tree"]
         if dest_tree.n == 0:
             raise ValueError(f"kD-tree for frame {dest_t} contains no coordinates.")
-        # TODO: parameterize the closest neighbours
-        k = 10 if dest_tree.n > 10 else dest_tree.n
+        k = self.k if dest_tree.n > self.k else dest_tree.n
         dest_distances, dest_indices = dest_tree.query(
             source_coords, 
             k=k if k > 1 else [k]

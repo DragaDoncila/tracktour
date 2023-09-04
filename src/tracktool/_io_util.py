@@ -7,9 +7,9 @@ import pandas as pd
 from tqdm import tqdm
 from ._flow_graph import FlowGraph
 
-def load_graph(seg_path):
+def load_graph(seg_path, n_neighbours=10):
     ims, coords, min_t, max_t, corners = get_im_centers(seg_path)
-    graph = FlowGraph(corners, coords, min_t=min_t, max_t=max_t)
+    graph = FlowGraph(corners, coords, n_neighbours=n_neighbours, min_t=min_t, max_t=max_t)
     return ims, graph
 
 def peek(im_file):
