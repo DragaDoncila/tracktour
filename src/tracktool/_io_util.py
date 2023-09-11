@@ -2,6 +2,7 @@ from tifffile import TiffFile
 from skimage.measure import regionprops
 from skimage.graph import pixel_graph, central_pixel
 import glob
+import networkx as nx
 import numpy as np
 import pandas as pd
 from ._flow_graph import FlowGraph
@@ -85,3 +86,23 @@ def get_centers(segmentation):
             label_center_mapping.pop(0, None)
             labels, centers = zip(*label_center_mapping.items())
         yield centers, labels
+
+def store_flow(nx_sol, ig_sol):
+    ig_sol._g.es.set_attribute_values('flow', 0)
+    flow_es = nx.get_edge_attributes(nx_sol, 'flow')
+    for e_id, flow in flow_es.items():
+        src, target = e_id
+        ig_sol._g.es[ig_sol._g.get_eid(src, target)]['flow'] = flow
+        
+def load_sol_flow_graph(sol_pth, seg_pth):
+    sol = nx.read_graphml(sol_pth, node_type=int)
+    sol_ims = load_tiff_frames(seg_pth)
+    oracle_node_df = pd.DataFrame.from_dict(sol.nodes, orient='index')
+    oracle_node_df.rename(columns={'pixel_value':'label'}, inplace=True)
+    oracle_node_df.drop(oracle_node_df.tail(4).index, inplace = True)
+    im_dim =  [(0, 0), sol_ims.shape[1:]]
+    min_t = 0
+    max_t = sol_ims.shape[0] - 1
+    sol_g = FlowGraph(im_dim, oracle_node_df, min_t, max_t)
+    store_flow(sol, sol_g)
+    return sol_g, sol_ims, oracle_node_df
