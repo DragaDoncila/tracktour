@@ -7,14 +7,18 @@ import numpy as np
 import networkx as nx
 import igraph
 
+from napari_graph import DirectedGraph
 from scipy.spatial import KDTree
-from tqdm import tqdm
 import pandas as pd
 import gurobipy as gp
 import time
 
 from ._costs import euclidean_cost_func, dist_to_edge_cost_func, closest_neighbour_child_cost
-
+try:
+    from napari.utils import progress as tqdm
+except ImportError:
+    from tqdm import tqdm
+    
 class FlowGraph:
     APPEARANCE_EDGE_REGEX = re.compile(r"e_a_[0-9]+\.[0-9]+")
     EXIT_EDGE_REGEX = re.compile(r"e_[0-9]+\.[0-9]+_t")
@@ -25,6 +29,7 @@ class FlowGraph:
         self,
         im_dim: Tuple[int],
         coords: "pandas.DataFrame",
+        n_neighbours: int = 10,
         min_t=0,
         max_t=None,
         pixel_vals: List[int] = None,
@@ -44,6 +49,10 @@ class FlowGraph:
         coords : DataFrame
             DataFrame with columns 't', 'y', 'x' and optionally 'z' of
             blob center coordinates for which to solve
+        n_neighbours: int
+            Number of neighbours to consider for cell migration in next frame, by
+            default 10. If fewer neighbours are present, all neighbours will be
+            considered.
         min_t: int, optional
             smallest frame number in the image. If missing, will be determined
             from min value of first coordinate of each object in coords
@@ -58,6 +67,7 @@ class FlowGraph:
         self.min_t = min_t or coords["t"].min()
         self.max_t = max_t or coords["t"].max()
         self.t = self.max_t - self.min_t + 1
+        self.k = n_neighbours
         self.im_dim = im_dim
         self.migration_only = migration_only
         self.spatial_cols = ["y", "x"]
@@ -212,7 +222,7 @@ class FlowGraph:
 
         for i, v in tqdm(
             enumerate(real_nodes),
-            desc="Making appearance/exit edges",
+            desc="Building enter/exit edges",
             total=len(real_nodes),
         ):
             # first frame should be able to appear at no extra cost
@@ -263,7 +273,7 @@ class FlowGraph:
 
         for source_t in tqdm(
             range(self.min_t, self.max_t),
-            desc=f"Making migration & division edges",
+            desc=f"Building frame-to-frame edges",
             total=self.t - 1,
         ):
             dest_t = source_t + 1
@@ -623,8 +633,7 @@ class FlowGraph:
         dest_tree = self._kdt_dict[dest_t]["tree"]
         if dest_tree.n == 0:
             raise ValueError(f"kD-tree for frame {dest_t} contains no coordinates.")
-        # TODO: parameterize the closest neighbours
-        k = 10 if dest_tree.n > 10 else dest_tree.n
+        k = self.k if dest_tree.n > self.k else dest_tree.n
         dest_distances, dest_indices = dest_tree.query(
             source_coords, 
             k=k if k > 1 else [k]
@@ -719,6 +728,14 @@ class FlowGraph:
         return duration
 
     def convert_sol_igraph_to_nx(self):
+        """Convert solved igraph to networkx directed graph
+        
+        Splits coords into 'y' and 'x' and deletes unused 
+        attributes.
+
+        Returns:
+            nx.Digraph: directed networkx graph
+        """
         for v in self._g.vs:
             v['y'] = v['coords'][0]
             v['x'] = v['coords'][1]
@@ -748,6 +765,35 @@ class FlowGraph:
         coords.rename({'pixel_value': 'label'}, axis=1, inplace=True)
         return coords
     
+    def to_napari_graph(self):
+        """Converts FlowGraph to napari graph layer, via networkx. 
+        
+        The full candidate graph and subgraph are stored in the layer metadata
+        for easy editing purposes. The graph layer contains only migration
+        edges based on a subgraph, for visualization purposes.
+        """
+        from napari.layers import Graph
+        nxg = self.convert_sol_igraph_to_nx()
+        pos = {k: (nxg.nodes[k]['t'], nxg.nodes[k]['y'], nxg.nodes[k]['x']) for k in nxg.nodes}
+        nx.set_node_attributes(nxg, pos, 'pos')
+        mig_subgraph = get_migration_subgraph(nxg).copy()
+        max_id = assign_track_id(mig_subgraph)
+        nx.set_node_attributes(nxg, -1, 'track-id')
+        nx.set_node_attributes(nxg, nx.get_node_attributes(mig_subgraph, 'track-id'), 'track-id')
+        napari_graph = DirectedGraph.from_networkx(mig_subgraph)
+        graph_layer = Graph(
+            napari_graph,
+            name="Solution Graph",
+            out_of_slice_display=True,
+            ndim=3,
+            size=5,
+            metadata={
+                'nxg': nxg,
+                'subgraph': mig_subgraph
+            },
+        )
+        return graph_layer
+        
     def get_merges(self):
         merges = []
         for v in self._g.vs:
@@ -763,3 +809,51 @@ class FlowGraph:
                     merges.append(v.index)
         return merges
 
+def get_migration_subgraph(nx_sol: 'nx.DiGraph'):
+    edges_with_flow = [e for e in nx_sol.edges if nx_sol.edges[e]['flow'] > 0]
+    flow_subgraph = nx_sol.edge_subgraph(edges_with_flow)
+    real_vs = []
+    for v in nx_sol.nodes:
+        v_info = nx_sol.nodes[v]
+        if not (v_info['is_appearance'] or\
+            v_info['is_target'] or\
+                v_info['is_division'] or\
+                    v_info['is_source']):
+                    real_vs.append(v)
+    migration_subgraph = flow_subgraph.subgraph(real_vs)
+    return migration_subgraph
+
+def assign_track_id(nx_sol):
+    """Assign unique integer track ID to each node. 
+
+    Nodes that have more than one incoming edge, or more than
+    two children trigger a new track ID.
+
+    Args:
+        nx_sol (nx.DiGraph): directed solution graph
+    """
+    roots = [node for node in nx_sol.nodes if nx_sol.in_degree(node) == 0]
+    nx.set_node_attributes(nx_sol, -1, 'track-id')
+    track_id = 1
+    for root in roots:
+        if nx_sol.out_degree(root) == 0:
+            nx_sol.nodes[root]['track-id'] = track_id
+            
+        for edge_key in nx.edge_dfs(nx_sol, root):
+            source, dest = edge_key[0], edge_key[1]
+            source_out = nx_sol.out_degree(source)
+            # true root
+            if nx_sol.in_degree(source) == 0 and nx_sol.nodes[source]['track-id'] == -1:
+                nx_sol.nodes[source]['track-id'] = track_id
+            # source is splitting or destination has multiple parents
+            if source_out > 1:
+                track_id += 1
+            elif nx_sol.in_degree(dest) > 1:
+                if nx_sol.nodes[dest]['track-id'] != -1:
+                    continue
+                else:
+                    track_id += 1
+            nx_sol.nodes[dest]['track-id'] = track_id
+            
+        track_id += 1
+    return track_id

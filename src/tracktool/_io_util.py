@@ -2,14 +2,19 @@ from tifffile import TiffFile
 from skimage.measure import regionprops
 from skimage.graph import pixel_graph, central_pixel
 import glob
+import networkx as nx
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 from ._flow_graph import FlowGraph
 
-def load_graph(seg_path):
+try: 
+    from napari.utils import progress as tqdm
+except ImportError:
+    from tqdm import tqdm
+
+def load_graph(seg_path, n_neighbours=10):
     ims, coords, min_t, max_t, corners = get_im_centers(seg_path)
-    graph = FlowGraph(corners, coords, min_t=min_t, max_t=max_t)
+    graph = FlowGraph(corners, coords, n_neighbours=n_neighbours, min_t=min_t, max_t=max_t)
     return ims, graph
 
 def peek(im_file):
@@ -34,8 +39,15 @@ def get_im_centers(im_pth):
     return im_arr, coords_df, min_t, max_t, corners
 
 def extract_im_centers(im_arr):
-    centers, labels = get_centers(im_arr)
-    center_coords = np.asarray(get_point_coords(centers))
+    centers, labels = [], []
+    for cent, lab in get_centers(im_arr):
+        centers.extend(cent)
+        labels.extend(lab)
+    return get_im_info(centers, labels, im_arr)
+
+
+def get_im_info(centers, labels, im_arr):
+    center_coords = np.asarray(centers)
     coords_df = pd.DataFrame(center_coords, columns=['t', 'y', 'x'])
     coords_df['t'] = coords_df['t'].astype(int)
     coords_df['label'] = labels
@@ -57,31 +69,40 @@ def get_medoid(prop):
 
 def get_centers(segmentation):
     n_frames = segmentation.shape[0]
-    centers_of_mass = []
-    all_labels = []
-    for i in tqdm(range(n_frames), desc='Processing frames'):
+    for i in tqdm(range(n_frames), desc='Extracting Centroids'):
         current_frame = segmentation[i]
         props = regionprops(current_frame)
         if props:
-            current_centers = [prop.centroid for prop in props]
-            frame_labels = current_frame[tuple(np.asarray(current_centers, dtype=int).T)]
+            current_centers = [(i, *prop.centroid) for prop in props]
+            frame_labels = segmentation[tuple(np.asarray(current_centers, dtype=int).T)]
             label_center_mapping = dict(zip(frame_labels, current_centers))
             # we haven't found centers for these labels, we need to medoid them
             unfound_labels = set(np.unique(current_frame)) - set(label_center_mapping.keys()) - set([0])
             for prop in props:
                 if prop.label in unfound_labels:
-                    label_center_mapping[prop.label] = get_medoid(prop)
+                    label_center_mapping[prop.label] = (i, *get_medoid(prop))
             # 0 is not a valid label and would only exist in the dictionary
             # if some labels required the medoid treatment.
             label_center_mapping.pop(0, None)
             labels, centers = zip(*label_center_mapping.items())
-            centers_of_mass.append(centers)
-            all_labels.extend(labels)
-    return centers_of_mass, all_labels
+        yield centers, labels
 
-def get_point_coords(centers_of_mass):
-    points_list = []
-    for i, frame_centers in enumerate(centers_of_mass):
-        points = [(i, *center) for center in frame_centers]
-        points_list.extend(points)
-    return points_list
+def store_flow(nx_sol, ig_sol):
+    ig_sol._g.es.set_attribute_values('flow', 0)
+    flow_es = nx.get_edge_attributes(nx_sol, 'flow')
+    for e_id, flow in flow_es.items():
+        src, target = e_id
+        ig_sol._g.es[ig_sol._g.get_eid(src, target)]['flow'] = flow
+        
+def load_sol_flow_graph(sol_pth, seg_pth):
+    sol = nx.read_graphml(sol_pth, node_type=int)
+    sol_ims = load_tiff_frames(seg_pth)
+    oracle_node_df = pd.DataFrame.from_dict(sol.nodes, orient='index')
+    oracle_node_df.rename(columns={'pixel_value':'label'}, inplace=True)
+    oracle_node_df.drop(oracle_node_df.tail(4).index, inplace = True)
+    im_dim =  [(0, 0), sol_ims.shape[1:]]
+    min_t = 0
+    max_t = sol_ims.shape[0] - 1
+    sol_g = FlowGraph(im_dim, oracle_node_df, min_t, max_t)
+    store_flow(sol, sol_g)
+    return sol_g, sol_ims, oracle_node_df

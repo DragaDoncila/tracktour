@@ -53,11 +53,11 @@ class MergeExplorer(Container):
             self._handle_focus_mode_change()
             return
         
-        if "nxg" in chosen_layer.metadata:
-            nxg = chosen_layer.metadata["nxg"]
+        if "subgraph" in chosen_layer.metadata:
+            nxg = chosen_layer.metadata["subgraph"]
         else:
             nxg = chosen_layer.data.to_networkx()
-            chosen_layer.metadata["nxg"] = nxg
+            chosen_layer.metadata["subgraph"] = nxg
 
         def get_choices(_merge_id_combo):
             merge_nodes = [(f'Track {nxg.nodes[node]["track-id"]}, Frame {nxg.nodes[node]["t"]}', node) for node in nxg.nodes if nxg.in_degree(node) > 1]
@@ -102,7 +102,7 @@ class MergeExplorer(Container):
         graph_layer.visible = True
 
         # get nxg from graph_layer
-        nxg = graph_layer.metadata["nxg"]
+        nxg = graph_layer.metadata["subgraph"]
         node_info = nxg.nodes[merge_id]
 
         # center camera
@@ -126,7 +126,7 @@ class MergeExplorer(Container):
             self.draw_current_bounding_box()
         else:
             if self._old_color is not None:
-                nxg = chosen_layer.metadata['nxg']
+                nxg = chosen_layer.metadata['subgraph']
                 nx.set_node_attributes(nxg, self._old_color, "color")            
                 chosen_layer.face_color = list(nx.get_node_attributes(nxg, "color").values())
             if self._bbox_dc is not None:
@@ -135,7 +135,7 @@ class MergeExplorer(Container):
                 self._bbox_dc = None
 
     def color_nodes_in_tree(self, layer=None, ev=None):
-        nxg = layer.metadata['nxg']
+        nxg = layer.metadata['subgraph']
         if self._arboretum.plotter.has_plot:
             # restore face color
             if self._old_color is not None:

@@ -4,7 +4,12 @@ contributions:
   commands:
     - id: tracktool.merge_explorer
       title: Merge Explorer...
-      python_name: tracktool._napari._plugin:MergeExplorer
+      python_name: tracktool._napari._merge_explorer:MergeExplorer
+    - id: tracktool.track_solver
+      title: Track Solver...
+      python_name: tracktool._napari._solver:TrackingSolver
   widgets:
     - command: tracktool.merge_explorer
       display_name: Merge Explorer
+    - command: tracktool.track_solver
+      display_name: Track Solver
