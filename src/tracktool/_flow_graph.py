@@ -416,6 +416,21 @@ class FlowGraph:
         for edge in self._g.es(self._bounded_edge):
             bounds_str += f'\t0 <= {edge["var_name"]} <= 1\n'
         return bounds_str
+    
+    def _get_edge_capacities(self):
+        """Get capacities for each edge. Currently defaults to 2
+        for migration edges and 1 for division edges.
+        """
+        bounds = []
+        for e in self._g.es:
+            if 'e_s' in e['var_name']:
+                bound = math.inf
+            elif 'e_d' in e['var_name']:
+                bound = 1
+            else:
+                bound = 2
+            bounds.append(bound)
+        return bounds
 
     def _to_lp(self, path):
         obj_str = self._get_objective_string()
@@ -439,7 +454,7 @@ class FlowGraph:
             )
             for e in self._g.es
         ])
-        bounds = [math.inf if 'e_s' in e['var_name'] else 1 for e in self._g.es]
+        bounds = self._get_edge_capacities()
         cost_dict = dict(zip(src_dest_info, edge_costs))
         m = gp.Model("tracks")
         flow = m.addVars(src_dest_info, obj=cost_dict, lb=0, ub=bounds, name="flow")
@@ -779,6 +794,20 @@ class FlowGraph:
         )
         return graph_layer
         
+    def get_merges(self):
+        merges = []
+        for v in self._g.vs:
+            if not (v['is_appearance'] or v['is_division'] or v['is_target']):
+                neighbours = self._g.neighbors(v, 'in')
+                real_neighbours = []
+                for n in neighbours:
+                    nv = self._g.vs[n]
+                    if not (nv['is_appearance'] or nv['is_division']):
+                        if self._g.es[self._g.get_eid(n, v)]['flow'] > 0:
+                            real_neighbours.append(n)
+                if len(real_neighbours) > 1:
+                    merges.append(v.index)
+        return merges
 
 def get_migration_subgraph(nx_sol: 'nx.DiGraph'):
     edges_with_flow = [e for e in nx_sol.edges if nx_sol.edges[e]['flow'] > 0]
