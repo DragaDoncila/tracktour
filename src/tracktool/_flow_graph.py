@@ -406,6 +406,21 @@ class FlowGraph:
         for edge in self._g.es(self._bounded_edge):
             bounds_str += f'\t0 <= {edge["var_name"]} <= 1\n'
         return bounds_str
+    
+    def _get_edge_capacities(self):
+        """Get capacities for each edge. Currently defaults to 2
+        for migration edges and 1 for division edges.
+        """
+        bounds = []
+        for e in self._g.es:
+            if 'e_s' in e['var_name']:
+                bound = math.inf
+            elif 'e_d' in e['var_name']:
+                bound = 1
+            else:
+                bound = 2
+            bounds.append(bound)
+        return bounds
 
     def _to_lp(self, path):
         obj_str = self._get_objective_string()
@@ -429,16 +444,7 @@ class FlowGraph:
             )
             for e in self._g.es
         ])
-        bounds = []
-        for e in self._g.es:
-            if 'e_s' in e['var_name']:
-                bound = math.inf
-            elif 'e_d' in e['var_name']:
-                bound = 1
-            else:
-                bound = 2
-            bounds.append(bound)
-        # bounds = [math.inf if 'e_s' in e['var_name'] else 1 for e in self._g.es]
+        bounds = self._get_edge_capacities()
         cost_dict = dict(zip(src_dest_info, edge_costs))
         m = gp.Model("tracks")
         flow = m.addVars(src_dest_info, obj=cost_dict, lb=0, ub=bounds, name="flow")
