@@ -2,8 +2,9 @@ import os
 import igraph
 import networkx as nx
 import pandas as pd
-from traccuracy import TrackingGraph, TrackingData
+from traccuracy import TrackingGraph
 from ._io_util import get_im_centers
+from tracktool._flow_graph import get_migration_subgraph
 
 def assign_intertrack_edges(nx_g: 'nx.DiGraph'):
     """Currently assigns is_intertrack_edge=True for all edges 
@@ -25,16 +26,14 @@ def assign_intertrack_edges(nx_g: 'nx.DiGraph'):
 def get_traccuracy_graph(sol_igraph: 'FlowGraph', seg_ims: 'np.ndarray') -> 'TrackingGraph':
     nx_g = get_migration_subgraph(sol_igraph.convert_sol_igraph_to_nx())
     assign_intertrack_edges(nx_g)
-    track_graph = TrackingGraph(nx_g, label_key='pixel_value')  
-    track_data = TrackingData(track_graph, seg_ims)
-    return track_data
+    track_graph = TrackingGraph(nx_g, label_key='pixel_value', segmentation=seg_ims)  
+    return track_graph
 
 def get_traccuracy_graph_nx(sol_nx: 'nx.DiGraph', seg_ims: 'np.ndarray'):
     nx_g = get_migration_subgraph(sol_nx)
     assign_intertrack_edges(nx_g)
-    track_graph = TrackingGraph(nx_g, label_key='pixel_value')  
-    track_data = TrackingData(track_graph, seg_ims)
-    return track_data
+    track_graph = TrackingGraph(nx_g, label_key='pixel_value', segmentation=seg_ims)  
+    return track_graph
 
         
 def load_gt_graph(gt_path, return_ims=False):
