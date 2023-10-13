@@ -1,4 +1,4 @@
-from tifffile import TiffFile
+from tifffile import imread
 from skimage.measure import regionprops
 from skimage.graph import pixel_graph, central_pixel
 import glob
@@ -17,21 +17,18 @@ def load_graph(seg_path, n_neighbours=10):
     graph = FlowGraph(corners, coords, n_neighbours=n_neighbours, min_t=min_t, max_t=max_t)
     return ims, graph
 
-def peek(im_file):
-    with TiffFile(im_file) as im:
-        im_shape = im.pages[0].shape
-        im_dtype = im.pages[0].dtype
-    return im_shape, im_dtype
-
 def load_tiff_frames(im_dir):
     all_tiffs = list(sorted(glob.glob(f'{im_dir}*.tif')))
     n_frames = len(all_tiffs)
-    frame_shape, im_dtype = peek(all_tiffs[0])
-    im_array = np.zeros((n_frames, *frame_shape), dtype=im_dtype)
-    for i, tiff_pth in enumerate(all_tiffs):
-        with TiffFile(tiff_pth) as im:
-            im_array[i] = im.pages[0].asarray()
-    return im_array
+    if not n_frames:
+        raise FileNotFoundError(f"Couldn't find any .tif files in {im_dir}")
+    
+    stack = []
+    for f in tqdm(all_tiffs, "Loading TIFFs"):
+        stack.append(imread(f))
+        
+    im = np.stack(stack)
+    return im
 
 def get_im_centers(im_pth):
     im_arr = load_tiff_frames(im_pth)
@@ -48,7 +45,13 @@ def extract_im_centers(im_arr):
 
 def get_im_info(centers, labels, im_arr):
     center_coords = np.asarray(centers)
-    coords_df = pd.DataFrame(center_coords, columns=['t', 'y', 'x'])
+    if center_coords.shape[1] == 3:
+        cols = ['t', 'y', 'x']
+    elif center_coords.shape[1] == 4:
+        cols = ['t', 'z', 'y', 'x']
+    else:
+        raise ValueError(f"Only 2D+T and 3D+T images are supported. Centroids have {center_coords.shape[1]} coordinates.")
+    coords_df = pd.DataFrame(center_coords, columns=cols)
     coords_df['t'] = coords_df['t'].astype(int)
     coords_df['label'] = labels
     min_t = 0

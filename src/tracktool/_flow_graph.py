@@ -136,11 +136,13 @@ class FlowGraph:
         }
         g = igraph.Graph(directed=True)
         g.add_vertices(n, all_attrs_dict)
+        
+        fake_coords = np.zeros(shape=len(self.spatial_cols), dtype=np.uint8)
 
         self.source = g.add_vertex(
             name="source",
             label="source",
-            coords=np.asarray((0, 0)),
+            coords=fake_coords,
             pixel_value=0,
             t=-1,
             is_source=True,
@@ -152,7 +154,7 @@ class FlowGraph:
         self.appearance = g.add_vertex(
             name="appearance",
             label="appearance",
-            coords=np.asarray((0, 0)),
+            coords=fake_coords,
             pixel_value=0,
             t=-1,
             is_source=False,
@@ -164,7 +166,7 @@ class FlowGraph:
         self.target = g.add_vertex(
             name="target",
             label="target",
-            coords=np.asarray((0, 0)),
+            coords=fake_coords,
             pixel_value=0,
             t=self.max_t + 1,  # max frame index is max_t
             is_source=False,
@@ -178,7 +180,7 @@ class FlowGraph:
                 name="division",
                 label="division",
                 # TODO: will break for 4d maybe
-                coords=np.asarray((0, 0)),
+                coords=fake_coords,
                 pixel_value=0,
                 t=-1,
                 is_source=False,
@@ -737,8 +739,10 @@ class FlowGraph:
             nx.Digraph: directed networkx graph
         """
         for v in self._g.vs:
-            v['y'] = v['coords'][0]
-            v['x'] = v['coords'][1]
+            if len(self.spatial_cols) == 3:
+                v['z'], v['y'], v['x'] = v['coords']
+            else:
+                v['y'], v['x'] = v['coords']
             for attr_name in self._g.vertex_attributes():
                 if isinstance(v[attr_name], np.bool_):
                     v[attr_name] = int(v[attr_name])
@@ -774,7 +778,7 @@ class FlowGraph:
         """
         from napari.layers import Graph
         nxg = self.convert_sol_igraph_to_nx()
-        pos = {k: (nxg.nodes[k]['t'], nxg.nodes[k]['y'], nxg.nodes[k]['x']) for k in nxg.nodes}
+        pos = {k: self.get_coord_tuple_from_node(nxg.nodes[k]) for k in nxg.nodes}
         nx.set_node_attributes(nxg, pos, 'pos')
         mig_subgraph = get_migration_subgraph(nxg).copy()
         max_id = assign_track_id(mig_subgraph)
@@ -808,6 +812,11 @@ class FlowGraph:
                 if len(real_neighbours) > 1:
                     merges.append(v.index)
         return merges
+    
+    
+    def get_coord_tuple_from_node(self, node):
+        node_tuple = (node['t'], ) + tuple(node[col] for col in self.spatial_cols)
+        return node_tuple
 
 def get_migration_subgraph(nx_sol: 'nx.DiGraph'):
     edges_with_flow = [e for e in nx_sol.edges if nx_sol.edges[e]['flow'] > 0]
