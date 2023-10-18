@@ -26,7 +26,7 @@ def get_gt_match_vertices(coords, gt_coords, sol_ims, gt_ims, v_id, label_key='l
     # we're only interested in overlaps with this vertex
     only_problem_v_mask = sol_ims[problem_t] == problem_label
     gt_frame = gt_ims[problem_t]
-    gt_ov_labels, _ = get_labels_with_overlap(gt_frame, only_problem_v_mask)
+    gt_ov_labels, _, _ = get_labels_with_overlap(gt_frame, only_problem_v_mask)
     gt_v_ids = []
     for label in gt_ov_labels:
         row = gt_coords[(gt_coords.label == label) & (gt_coords.t==problem_t)]
@@ -48,7 +48,7 @@ def filter_other_overlaps(gt_v_ids, sol_frame, gt_frame, gt_coords):
     for gt_v in gt_v_ids:
         v_label = gt_coords.loc[[gt_v], ['label']].values[0]
         only_gt_v_mask = gt_frame == v_label
-        gt_overlaps, sol_overlaps = get_labels_with_overlap(only_gt_v_mask, sol_frame)
+        gt_overlaps, sol_overlaps, _ = get_labels_with_overlap(only_gt_v_mask, sol_frame)
         # no bounding box overlaps, we can return 
         if not len(sol_overlaps):
             real_overlaps.append(gt_v)
@@ -101,7 +101,7 @@ def get_gt_unmatched_vertices_near_parent(coords, gt_coords, sol_ims, gt_ims, v_
     for v in potential_unmatched:
         v_label = gt_coords.loc[[v], ['label']].values[0]
         mask = gt_ims[problem_t] == v_label
-        _, sol_overlaps = get_labels_with_overlap(mask, problem_frame)
+        _, sol_overlaps, _ = get_labels_with_overlap(mask, problem_frame)
         if not len(sol_overlaps) and v not in unmatched:
             unmatched.append(v)
     return unmatched

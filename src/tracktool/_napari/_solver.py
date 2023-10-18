@@ -66,7 +66,7 @@ class TrackingSolver(Container):
             segmentation = np.asarray(segmentation)
         coords_df, min_t, max_t, corners = extract_im_centers(segmentation)
         
-        flow_graph = FlowGraph(corners, coords_df, n_neighbours=n_neighbours, min_t=min_t, max_t=max_t)
+        flow_graph = FlowGraph(corners, coords=coords_df, n_neighbours=n_neighbours, min_t=min_t, max_t=max_t)
         flow_graph.solve()
 
         # make graph layer and tracks layer from solution        
