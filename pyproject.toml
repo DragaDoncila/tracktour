@@ -17,6 +17,7 @@ dynamic = ["version"]
 dependencies = [
     "arboretum",
     "napari",
+    "napari-graph",
     "numpy",
     "scipy",
     "networkx",
