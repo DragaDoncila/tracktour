@@ -28,7 +28,8 @@ class FlowGraph:
     def __init__(
         self,
         im_dim: Tuple[int],
-        coords: "pandas.DataFrame",
+        coords: "Optional[pandas.DataFrame]" = None,
+        graph: "Optional[igraph.Graph]" = None,
         n_neighbours: int = 10,
         min_t=0,
         max_t=None,
@@ -46,9 +47,14 @@ class FlowGraph:
         ----------
         im_dim : List[Tuple[int], Tuple[int]]
             top left and bottom right of frame bounding box (across all frames)
-        coords : DataFrame
+        coords : Optional[DataFrame]
             DataFrame with columns 't', 'y', 'x' and optionally 'z' of
-            blob center coordinates for which to solve
+            blob center coordinates for which to solve. If None, must provide
+            graph
+        graph: Optional[igraph.Graph]
+            Pre-built candidate graph with all edges and costs assigned. Must have 
+            source, appearance, division and target vertices. If None, must provide
+            coords.
         n_neighbours: int
             Number of neighbours to consider for cell migration in next frame, by
             default 10. If fewer neighbours are present, all neighbours will be
@@ -64,20 +70,44 @@ class FlowGraph:
         migration_only: bool, optional
             Whether the model ignores divisions or not, by default False
         """
-        self.min_t = min_t or coords["t"].min()
-        self.max_t = max_t or coords["t"].max()
-        self.t = self.max_t - self.min_t + 1
-        self.k = n_neighbours
+        if coords is None and graph is None:
+            raise ValueError("One of coords or graph must be provided.")
+        if coords is not None and graph is not None:
+            raise ValueError("Cannot provide both graph and coords.")
+        
         self.im_dim = im_dim
+        self.k = n_neighbours
         self.migration_only = migration_only
         self.spatial_cols = ["y", "x"]
-        if "z" in coords.columns:
-            self.spatial_cols.insert(0, "z")
-        if pixel_vals is None and "label" in coords.columns:
-            pixel_vals = coords["label"].tolist()
-        self._g = self._init_nodes(coords, pixel_vals)
-        self._kdt_dict = self._build_trees()
-        self._init_edges()
+        if coords is not None:
+            self.min_t = min_t or coords["t"].min()
+            self.max_t = max_t or coords["t"].max()
+            self.t = self.max_t - self.min_t + 1
+
+            if "z" in coords.columns:
+                self.spatial_cols.insert(0, "z")
+            if pixel_vals is None and "label" in coords.columns:
+                pixel_vals = coords["label"].tolist()
+            self._g = self._init_nodes(coords, pixel_vals)
+            self._kdt_dict = self._build_trees()
+            self._init_edges()
+        elif graph is not None:
+            self.min_t = min_t or max(min(graph.vs['t']), 0)
+            self.max_t = max_t or max(graph.vs['t'])
+            self.t = self.max_t - self.min_t + 1
+            
+            self._g = graph
+            self.source = self._g.vs.select(is_source=True)[0]
+            self.appearance = self._g.vs.select(is_appearance=True)[0]
+            self.target = self._g.vs.select(is_target=True)[0]
+            if not self.migration_only:
+                self.division = self._g.vs.select(is_division=True)[0]
+            if "z" in self._g.vs[0].attribute_names():
+                self.spatial_cols.insert("z")
+            self._g.vs['coords'] = [tuple(v[col] for col in self.spatial_cols) for v in self._g.vs]
+            self._kdt_dict = self._build_trees()
+            
+
 
     def _build_trees(self):
         """Build dictionary of t -> kd tree for all vertices in all frames."""
@@ -503,12 +533,15 @@ class FlowGraph:
         if solver != 'gurobi':
             raise NotImplementedError("We don't yet support a non-gurobi solver")
         m, flow_info = self._to_gurobi_model()
+        m.Params.LogToConsole = 0
         m.optimize()
         if m.Status == 2:
+            start_time = time.time()
             self.store_solution(m)
+            store_time = time.time() - start_time
         else:
             raise RuntimeError(f"Couldn't solve model. Model status: {m.Status}.")
-        
+        return m.Runtime, store_time
 
     def save_flow_info(self, coords):
         coords['in-app'] = 0
@@ -752,11 +785,13 @@ class FlowGraph:
             for attr_name in self._g.edge_attributes():
                 if e[attr_name] is None:
                     e[attr_name] = 0
-        del(self._g.vs['coords'])
-        del(self._g.vs['name'])
-        del(self._g.vs['label'])
+        attr_names = self._g.vs[0].attribute_names()
+        for attr in ['coords', 'name', 'label', '_nx_name']:
+            if attr in attr_names:
+                del(self._g.vs[attr])
 
-        del(self._g.es['label'])
+        if 'label' in self._g.es[0].attribute_names():
+            del(self._g.es['label'])
         nx_g = self._g.to_networkx(create_using=nx.DiGraph)
         return nx_g
     
@@ -765,7 +800,7 @@ class FlowGraph:
         split_cols = tuple(zip(*list(coords['coords'].values)))
         for i, col in enumerate(self.spatial_cols):
             coords[col] = split_cols[i]
-        coords.drop(columns=['label', 'name', 'coords'], inplace=True)
+        coords.drop(columns=['label', 'name', 'coords'], inplace=True, errors='ignore')
         coords.rename({'pixel_value': 'label'}, axis=1, inplace=True)
         return coords
     
