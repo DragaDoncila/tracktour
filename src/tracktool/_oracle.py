@@ -120,7 +120,7 @@ def get_oracle(merge_node_ids, sol_graph, coords, gt_coords, sol_ims, gt_ims):
                 not sol_graph._is_virtual_node(sol_graph._g.vs[v])]
         gt_unmatched = get_gt_unmatched_vertices_near_parent(coords, gt_coords, sol_ims, gt_ims, i, parent_ids, 50)
         problem_v = coords.loc[[i]]
-        problem_coords = tuple(problem_v[['y', 'x']].values[0])
+        problem_coords = tuple(problem_v[sol_graph.spatial_cols].values[0])
         # we don't want to "reuse" a vertex we have already found
         gt_matched = list(filter(lambda v: v not in identified_gt_vs, gt_matched))
         gt_unmatched = list(filter(lambda v: v not in identified_gt_vs, gt_unmatched))            
@@ -135,7 +135,7 @@ def get_oracle(merge_node_ids, sol_graph, coords, gt_coords, sol_ims, gt_ims):
         elif len(gt_matched) > 1:
             # closest match is `v`, second closest gets introduced
             distances_to_v = [np.linalg.norm(
-                                np.asarray(problem_coords) - np.asarray(gt_coords.loc[[v], ['y', 'x']].values[0])
+                                np.asarray(problem_coords) - np.asarray(gt_coords.loc[[v], sol_graph.spatial_cols].values[0])
                             ) for v in gt_matched]
             second_closest = gt_matched[np.argsort(distances_to_v)[1]]
             v_info = gt_coords.loc[second_closest]
@@ -166,7 +166,7 @@ def get_oracle(merge_node_ids, sol_graph, coords, gt_coords, sol_ims, gt_ims):
 
         oracle[i] = {
             'decision': decision,
-            'v_info': None if v_info is None else (int(new_index), list(v_info[['t', 'y', 'x']]) + [int(next_label)]),
+            'v_info': None if v_info is None else (int(new_index), list(v_info[['t', *sol_graph.spatial_cols]]) + [int(next_label)]),
             'parent': None
         }
         v_info = None

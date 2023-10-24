@@ -34,6 +34,7 @@ def get_tracks_from_nxg(nxg: 'nx.DiGraph'):
         max_id = assign_track_id(nxg)
     sol_node_df = pd.DataFrame.from_dict(nxg.nodes, orient='index')
     parent_connections = _get_parents(sol_node_df, max_id, nxg)
+    # TODO: 3D BREAK!
     track_df = sol_node_df[sol_node_df['track-id'] != -1].sort_values(['track-id', 't'])[['track-id', 't', 'y', 'x']]
     parent_connections = {k: list(v) for k, v in parent_connections.items()}
     track_layer = Tracks(track_df, graph=parent_connections, tail_length=1, name='tracks')

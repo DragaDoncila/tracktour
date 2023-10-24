@@ -103,7 +103,7 @@ class FlowGraph:
             if not self.migration_only:
                 self.division = self._g.vs.select(is_division=True)[0]
             if "z" in self._g.vs[0].attribute_names():
-                self.spatial_cols.insert("z")
+                self.spatial_cols.insert(0, "z")
             self._g.vs['coords'] = [tuple(v[col] for col in self.spatial_cols) for v in self._g.vs]
             self._kdt_dict = self._build_trees()
             
