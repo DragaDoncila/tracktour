@@ -105,10 +105,28 @@ class FlowGraph:
             if "z" in self._g.vs[0].attribute_names():
                 self.spatial_cols.insert(0, "z")
             self._g.vs['coords'] = [tuple(v[col] for col in self.spatial_cols) for v in self._g.vs]
-            self._kdt_dict = self._build_trees()
+            self._g.vs['label'] = self._get_labels()
             
+            self._kdt_dict = self._build_trees()            
 
 
+    def _get_labels(self):
+        if 'label' in self._g.vs.attribute_names():
+            return self._g.vs['label']
+        labels = []
+        for v in self._g.vs:
+            if v['is_appearance']:
+                labels.append('appearance')
+            elif v['is_target']:
+                labels.append('target')
+            elif v['is_source']:
+                labels.append('source')
+            elif v['is_division']:
+                labels.append('division')
+            else:
+                labels.append(f"{v['t']}_{v['pixel_value']}")
+        return labels
+            
     def _build_trees(self):
         """Build dictionary of t -> kd tree for all vertices in all frames."""
         kd_dict = {}
@@ -772,10 +790,11 @@ class FlowGraph:
             nx.Digraph: directed networkx graph
         """
         for v in self._g.vs:
-            if len(self.spatial_cols) == 3:
-                v['z'], v['y'], v['x'] = v['coords']
-            else:
-                v['y'], v['x'] = v['coords']
+            if 'coords' in v.attribute_names():
+                if len(self.spatial_cols) == 3:
+                    v['z'], v['y'], v['x'] = v['coords']
+                else:
+                    v['y'], v['x'] = v['coords']
             for attr_name in self._g.vertex_attributes():
                 if isinstance(v[attr_name], np.bool_):
                     v[attr_name] = int(v[attr_name])

@@ -8,7 +8,8 @@ from tracktool._flow_graph import get_migration_subgraph
 
 def assign_intertrack_edges(nx_g: 'nx.DiGraph'):
     """Currently assigns is_intertrack_edge=True for all edges 
-    leaving a division vertex
+    that has more than one incoming edge and/or more than one
+    outgoing ede.
 
     Args:
         g (nx.DiGraph): directed tracking graph
