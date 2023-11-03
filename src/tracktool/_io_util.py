@@ -1,6 +1,8 @@
+import igraph
 from tifffile import imread
 from skimage.measure import regionprops
 from skimage.graph import pixel_graph, central_pixel
+from skimage.morphology import skeletonize
 import glob
 import networkx as nx
 import numpy as np
@@ -14,7 +16,7 @@ except ImportError:
 
 def load_graph(seg_path, n_neighbours=10):
     ims, coords, min_t, max_t, corners = get_im_centers(seg_path)
-    graph = FlowGraph(corners, coords, n_neighbours=n_neighbours, min_t=min_t, max_t=max_t)
+    graph = FlowGraph(corners, coords=coords, n_neighbours=n_neighbours, min_t=min_t, max_t=max_t)
     return ims, graph
 
 def load_tiff_frames(im_dir):
@@ -61,9 +63,10 @@ def get_im_info(centers, labels, im_arr):
 
 def get_medoid(prop):
     region = prop.image
-    g, nodes = pixel_graph(region, connectivity=2)
+    region_skeleton = skeletonize(region).astype(bool)
+    g, nodes = pixel_graph(region_skeleton, connectivity=2)
     medoid_offset, _ = central_pixel(
-            g, nodes=nodes, shape=region.shape, partition_size=100
+            g, nodes=nodes, shape=region_skeleton.shape, partition_size=100
             )
     medoid_offset = np.asarray(medoid_offset)
     top_left = np.asarray(prop.bbox[:region.ndim])
@@ -100,12 +103,10 @@ def store_flow(nx_sol, ig_sol):
 def load_sol_flow_graph(sol_pth, seg_pth):
     sol = nx.read_graphml(sol_pth, node_type=int)
     sol_ims = load_tiff_frames(seg_pth)
-    oracle_node_df = pd.DataFrame.from_dict(sol.nodes, orient='index')
-    oracle_node_df.rename(columns={'pixel_value':'label'}, inplace=True)
-    oracle_node_df.drop(oracle_node_df.tail(4).index, inplace = True)
-    im_dim =  [(0, 0), sol_ims.shape[1:]]
+    sol_g = igraph.Graph.from_networkx(sol)
+    im_dim = sol_ims.shape[1:]
+    im_dim =  [tuple([0 for _ in range(len(im_dim))]), im_dim]
     min_t = 0
     max_t = sol_ims.shape[0] - 1
-    sol_g = FlowGraph(im_dim, oracle_node_df, min_t, max_t)
-    store_flow(sol, sol_g)
-    return sol_g, sol_ims, oracle_node_df
+    sol_g = FlowGraph(im_dim, graph=sol_g, min_t=min_t, max_t=max_t)
+    return sol_g, sol_ims

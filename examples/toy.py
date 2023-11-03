@@ -20,7 +20,7 @@ coords = pd.DataFrame(coords, columns=["t", "y", "x"])
 pixel_vals = [1, 2, 3, 1, 2, 3, 1, 2, 3]
 graph = FlowGraph(
     [(0, 0), (100, 100)],
-    coords,
+    coords=coords,
     min_t=0,
     max_t=2,
     pixel_vals=pixel_vals,

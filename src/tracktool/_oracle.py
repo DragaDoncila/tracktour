@@ -26,7 +26,7 @@ def get_gt_match_vertices(coords, gt_coords, sol_ims, gt_ims, v_id, label_key='l
     # we're only interested in overlaps with this vertex
     only_problem_v_mask = sol_ims[problem_t] == problem_label
     gt_frame = gt_ims[problem_t]
-    gt_ov_labels, _ = get_labels_with_overlap(gt_frame, only_problem_v_mask)
+    gt_ov_labels, _, _ = get_labels_with_overlap(gt_frame, only_problem_v_mask)
     gt_v_ids = []
     for label in gt_ov_labels:
         row = gt_coords[(gt_coords.label == label) & (gt_coords.t==problem_t)]
@@ -48,7 +48,7 @@ def filter_other_overlaps(gt_v_ids, sol_frame, gt_frame, gt_coords):
     for gt_v in gt_v_ids:
         v_label = gt_coords.loc[[gt_v], ['label']].values[0]
         only_gt_v_mask = gt_frame == v_label
-        gt_overlaps, sol_overlaps = get_labels_with_overlap(only_gt_v_mask, sol_frame)
+        gt_overlaps, sol_overlaps, _ = get_labels_with_overlap(only_gt_v_mask, sol_frame)
         # no bounding box overlaps, we can return 
         if not len(sol_overlaps):
             real_overlaps.append(gt_v)
@@ -101,7 +101,7 @@ def get_gt_unmatched_vertices_near_parent(coords, gt_coords, sol_ims, gt_ims, v_
     for v in potential_unmatched:
         v_label = gt_coords.loc[[v], ['label']].values[0]
         mask = gt_ims[problem_t] == v_label
-        _, sol_overlaps = get_labels_with_overlap(mask, problem_frame)
+        _, sol_overlaps, _ = get_labels_with_overlap(mask, problem_frame)
         if not len(sol_overlaps) and v not in unmatched:
             unmatched.append(v)
     return unmatched
@@ -120,7 +120,7 @@ def get_oracle(merge_node_ids, sol_graph, coords, gt_coords, sol_ims, gt_ims):
                 not sol_graph._is_virtual_node(sol_graph._g.vs[v])]
         gt_unmatched = get_gt_unmatched_vertices_near_parent(coords, gt_coords, sol_ims, gt_ims, i, parent_ids, 50)
         problem_v = coords.loc[[i]]
-        problem_coords = tuple(problem_v[['y', 'x']].values[0])
+        problem_coords = tuple(problem_v[sol_graph.spatial_cols].values[0])
         # we don't want to "reuse" a vertex we have already found
         gt_matched = list(filter(lambda v: v not in identified_gt_vs, gt_matched))
         gt_unmatched = list(filter(lambda v: v not in identified_gt_vs, gt_unmatched))            
@@ -135,7 +135,7 @@ def get_oracle(merge_node_ids, sol_graph, coords, gt_coords, sol_ims, gt_ims):
         elif len(gt_matched) > 1:
             # closest match is `v`, second closest gets introduced
             distances_to_v = [np.linalg.norm(
-                                np.asarray(problem_coords) - np.asarray(gt_coords.loc[[v], ['y', 'x']].values[0])
+                                np.asarray(problem_coords) - np.asarray(gt_coords.loc[[v], sol_graph.spatial_cols].values[0])
                             ) for v in gt_matched]
             second_closest = gt_matched[np.argsort(distances_to_v)[1]]
             v_info = gt_coords.loc[second_closest]
@@ -166,7 +166,7 @@ def get_oracle(merge_node_ids, sol_graph, coords, gt_coords, sol_ims, gt_ims):
 
         oracle[i] = {
             'decision': decision,
-            'v_info': None if v_info is None else (int(new_index), list(v_info[['t', 'y', 'x']]) + [int(next_label)]),
+            'v_info': None if v_info is None else (int(new_index), list(v_info[['t', *sol_graph.spatial_cols]]) + [int(next_label)]),
             'parent': None
         }
         v_info = None
