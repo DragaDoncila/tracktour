@@ -3,8 +3,10 @@ import networkx as nx
 from collections import defaultdict
 
 import pandas as pd
-from napari.layers import Tracks, Graph
+from napari.layers import Tracks, Labels
 from .._flow_graph import assign_track_id
+from .._viz_util import mask_by_id
+
 
 def _get_parents(node_df, max_track_id, sol):
     parents = defaultdict(set)
@@ -62,3 +64,21 @@ def get_tracks_from_nxg(nxg: 'nx.DiGraph'):
 #         },
 #     )
 #     return sol_napari_layer
+
+def get_coloured_graph_labels(flow_graph, segmentation):
+    napari_graph_layer = flow_graph.to_napari_graph()
+    subgraph = napari_graph_layer.metadata['subgraph']
+    tracks_layer = get_tracks_from_nxg(subgraph)
+    napari_graph_layer.metadata['tracks'] = tracks_layer
+    
+    # recolor segmentation and graph points by track-id
+    sol_node_df = pd.DataFrame.from_dict(subgraph.nodes, orient="index")
+    masks = mask_by_id(sol_node_df, segmentation)
+    masked_seg = Labels(masks, name='Track Coloured Seg', visible=False)
+    
+    # subgraph, tracks layer and graph layer **all** need to know about colour :<<<<
+    color_dict = {node_id: (node_info['track-id'], masked_seg.get_color(node_info['track-id'])) for node_id, node_info in subgraph.nodes(data=True)}
+    napari_graph_layer.face_color = [val[1] for val in color_dict.values()]
+    napari_graph_layer.metadata['tracks'].metadata={'colors': dict([(val[0], val[1]) for val in color_dict.values()])}
+    nx.set_node_attributes(subgraph, {k: v[1] for k, v in color_dict.items()}, 'color')
+    return napari_graph_layer, masked_seg

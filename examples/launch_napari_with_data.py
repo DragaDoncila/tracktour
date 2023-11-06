@@ -11,5 +11,7 @@ viewer = napari.Viewer()
 viewer.add_image(ims, name='Image')
 viewer.add_labels(seg_ims, name='Segmentation')
 viewer.window.add_plugin_dock_widget('tracktool', 'Track Solver')
+viewer.window.add_plugin_dock_widget('tracktool', 'Merge Explorer')
+viewer.window.add_plugin_dock_widget('tracktool', 'Track Editor')
 
 napari.run()
