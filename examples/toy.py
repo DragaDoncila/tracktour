@@ -1,5 +1,5 @@
 import pandas as pd
-from tracktool import FlowGraph
+from tracktour import FlowGraph
 import igraph
 import os
 

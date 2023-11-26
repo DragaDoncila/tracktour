@@ -4,7 +4,7 @@ import networkx as nx
 import pandas as pd
 from traccuracy import TrackingGraph
 from ._io_util import get_im_centers, load_tiff_frames
-from tracktool._flow_graph import get_migration_subgraph
+from tracktour._flow_graph import get_migration_subgraph
 
 def assign_intertrack_edges(nx_g: 'nx.DiGraph'):
     """Currently assigns is_intertrack_edge=True for all edges 

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 # https://peps.python.org/pep-0621/
 [project]
-name = "tracktool"
+name = "tracktour"
 description = "Network flow based tracker with guided error correction"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -46,7 +46,7 @@ classifiers = [
 ]
 
 [tool.hatch.version]
-path = "src/tracktool/__init__.py"
+path = "src/tracktour/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["src"]
@@ -58,8 +58,8 @@ sources = ["src"]
 test = ["pytest>=6.0"]
 
 [project.urls]
-homepage = "https://github.com/DragaDoncila/tracktool"
-repository = "https://github.com/DragaDoncila/tracktool"
+homepage = "https://github.com/DragaDoncila/tracktour"
+repository = "https://github.com/DragaDoncila/tracktour"
 
 [project.entry-points."napari.manifest"]
-napari-tracktool = "tracktool:napari.yaml"
+napari-tracktour = "tracktour:napari.yaml"
