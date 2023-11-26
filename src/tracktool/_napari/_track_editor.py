@@ -114,5 +114,6 @@ class TrackEditor(Container):
             current_layer.metadata['nxg'] = napari_graph_layer.metadata['nxg']
             current_layer.metadata['tracks'] = napari_graph_layer.metadata['tracks']
             current_layer.metadata['subgraph'] = napari_graph_layer.metadata['subgraph']
+            current_layer.face_color = napari_graph_layer.face_color
         if seg.name in self._viewer.layers:
             self._viewer.layers[seg.name].data = seg.data
