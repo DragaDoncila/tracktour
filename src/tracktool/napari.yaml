@@ -8,8 +8,13 @@ contributions:
     - id: tracktool.track_solver
       title: Track Solver...
       python_name: tracktool._napari._solver:TrackingSolver
+    - id: tracktool.track_editor
+      title: Track Editor...
+      python_name: tracktool._napari._track_editor:TrackEditor
   widgets:
     - command: tracktool.merge_explorer
       display_name: Merge Explorer
     - command: tracktool.track_solver
       display_name: Track Solver
+    - command: tracktool.track_editor
+      display_name: Track Editor

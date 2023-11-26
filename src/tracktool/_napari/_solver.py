@@ -8,8 +8,7 @@ from magicgui.widgets import Container, PushButton, create_widget
 
 from tracktool._io_util import extract_im_centers
 from tracktool._flow_graph import FlowGraph
-from tracktool._viz_util import mask_by_id
-from tracktool._napari._graph_conversion_util import get_tracks_from_nxg
+from tracktool._napari._graph_conversion_util import get_coloured_graph_labels
 # from napari.qt.threading import create_worker
 
 class TrackingSolver(Container):
@@ -70,23 +69,10 @@ class TrackingSolver(Container):
         flow_graph.solve()
 
         # make graph layer and tracks layer from solution        
-        napari_graph_layer = flow_graph.to_napari_graph()
-        subgraph = napari_graph_layer.metadata['subgraph']
-        tracks_layer = get_tracks_from_nxg(subgraph)
-        napari_graph_layer.metadata['tracks'] = tracks_layer
-        
-        # recolor segmentation and graph points by track-id
-        sol_node_df = pd.DataFrame.from_dict(subgraph.nodes, orient="index")
-        masks = mask_by_id(sol_node_df, segmentation)
-        masked_seg = self._viewer.add_labels(masks, name='Solution Segmentation')
-        
-        # subgraph, tracks layer and graph layer **all** need to know about colour :<<<<
-        color_dict = {node_id: (node_info['track-id'], masked_seg.get_color(node_info['track-id'])) for node_id, node_info in subgraph.nodes(data=True)}
-        napari_graph_layer.face_color = [val[1] for val in color_dict.values()]
-        napari_graph_layer.metadata['tracks'].metadata={'colors': dict([(val[0], val[1]) for val in color_dict.values()])}
-        nx.set_node_attributes(subgraph, {k: v[1] for k, v in color_dict.items()}, 'color')
+        napari_graph_layer, coloured_seg_layer = get_coloured_graph_labels(flow_graph, segmentation)
 
         self._viewer.add_layer(napari_graph_layer)
+        self._viewer.add_layer(coloured_seg_layer)
         seg_layer.visible = False
         
         

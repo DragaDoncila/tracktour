@@ -1,3 +1,4 @@
+from copy import deepcopy
 from functools import partial
 import math
 import re
@@ -612,7 +613,7 @@ class FlowGraph:
             # add v to target
             self._g.add_edge(v, self.target, var_name=f"e_{v['t']}.{v['pixel_value']}_t", cost=target, label=str(target)[:5])
 
-    def introduce_vertices(self, oracle):
+    def introduce_vertices(self, oracle, rebuild=True):
         """Introduce vertices from oracle into graph.
 
         This includes rebuilding the kdtrees for affected frames and
@@ -627,39 +628,10 @@ class FlowGraph:
             t, coords, new_label = v_info
             self.introduce_vertex(new_vid, t, coords, new_label, add_hyperedges=True)
             affected_ts.add(t)
-        affected_ts = list(sorted(affected_ts))
-        for t in affected_ts:
-            tree, indices = self._build_tree_at_t(t)
-            self._kdt_dict[t] = {
-                "tree": tree, 
-                "indices": indices
-            }
-        all_pairs = []
-        for i, t in enumerate(affected_ts):
-            if not i:
-                pairs = [(t-1, t), (t, t+1)]
-            elif t - affected_ts[i-1] > 1:
-                pairs = [(t-1, t), (t, t+1)]
-            else:
-                pairs = [(t, t+1)]
-            for pair in pairs:
-                t1 = pair[0]
-                t2 = pair[1]
-                if t1 < 0:
-                    continue
-                if t2 > self.max_t:
-                    continue
-                all_pairs.append(pair)
-
-        start_time = time.time()
-        for pair in all_pairs:
-            # delete current migration & division edges
-            self._clear_frame(pair[0], pair[1])
-        for pair in tqdm(all_pairs, desc='Rebuilding frames'):
-            # recompute
-            self._rebuild_frame_edges(pair[0], pair[1])
-        duration = time.time() - start_time
-        return duration, len(all_pairs)
+        if not rebuild:
+            return 0, 0
+        duration, n_rebuilt = self.rebuild_frames(affected_ts)
+        return duration, n_rebuilt
     
     def _clear_frame(self, source_t, dest_t):
         # delete all migration and division edges
@@ -678,6 +650,50 @@ class FlowGraph:
         }
         self._g.add_edges(mig_edges['edges'] + div_edges['edges'], attributes=all_attrs)
 
+    def rebuild_frames(self, affected_ts):
+        affected_ts = list(sorted(affected_ts))
+        for t in affected_ts:
+            tree, indices = self._build_tree_at_t(t)
+            self._kdt_dict[t] = {
+                "tree": tree, 
+                "indices": indices
+            }
+        all_pairs = self.get_affected_frame_pairs(affected_ts)
+        start_time = time.time()
+        for pair in all_pairs:
+            # delete current migration & division edges
+            self._clear_frame(pair[0], pair[1])
+        for pair in tqdm(all_pairs, desc='Rebuilding frames'):
+            # recompute
+            self._rebuild_frame_edges(pair[0], pair[1])
+        duration = time.time() - start_time
+        return duration, len(all_pairs)
+    
+    def get_affected_frame_pairs(self, affected_ts):
+        all_pairs = []
+        for i, t in enumerate(affected_ts):
+            if not i:
+                pairs = [(t-1, t), (t, t+1)]
+            elif t - affected_ts[i-1] > 1:
+                pairs = [(t-1, t), (t, t+1)]
+            else:
+                pairs = [(t, t+1)]
+            for pair in pairs:
+                t1 = pair[0]
+                t2 = pair[1]
+                if t1 < 0:
+                    continue
+                if t2 > self.max_t:
+                    continue
+                all_pairs.append(pair)
+        return all_pairs
+    
+    def move_vertex(self, vertex, new_coords):
+        # TODO: This leaves candidate graph in inconsistent state! Should optionally rebuild
+        self._g.vs[vertex]['coords'] = new_coords
+        for i, col in enumerate(self.spatial_cols):
+            self._g.vs[vertex][col] = new_coords[i]
+    
     def _get_frame_edges(self, source_t, dest_t):
         source_nodes = self._g.vs(t=source_t)
         source_coords = np.asarray(source_nodes["coords"])
@@ -789,29 +805,30 @@ class FlowGraph:
         Returns:
             nx.Digraph: directed networkx graph
         """
-        for v in self._g.vs:
+        gcopy = deepcopy(self._g)
+        for v in gcopy.vs:
             if 'coords' in v.attribute_names():
                 if len(self.spatial_cols) == 3:
                     v['z'], v['y'], v['x'] = v['coords']
                 else:
                     v['y'], v['x'] = v['coords']
-            for attr_name in self._g.vertex_attributes():
+            for attr_name in gcopy.vertex_attributes():
                 if isinstance(v[attr_name], np.bool_):
                     v[attr_name] = int(v[attr_name])
                 elif v[attr_name] is None:
                     v[attr_name] = 0
-        for e in self._g.es:
-            for attr_name in self._g.edge_attributes():
+        for e in gcopy.es:
+            for attr_name in gcopy.edge_attributes():
                 if e[attr_name] is None:
                     e[attr_name] = 0
-        attr_names = self._g.vs[0].attribute_names()
+        attr_names = gcopy.vs[0].attribute_names()
         for attr in ['coords', 'name', 'label', '_nx_name']:
             if attr in attr_names:
-                del(self._g.vs[attr])
+                del(gcopy.vs[attr])
 
-        if 'label' in self._g.es[0].attribute_names():
-            del(self._g.es['label'])
-        nx_g = self._g.to_networkx(create_using=nx.DiGraph)
+        if 'label' in gcopy.es[0].attribute_names():
+            del(gcopy.es['label'])
+        nx_g = gcopy.to_networkx(create_using=nx.DiGraph)
         return nx_g
     
     def get_coords_df(self):
