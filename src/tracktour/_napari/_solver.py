@@ -6,9 +6,9 @@ import warnings
 from dask.array import Array
 from magicgui.widgets import Container, PushButton, create_widget
 
-from tracktool._io_util import extract_im_centers
-from tracktool._flow_graph import FlowGraph
-from tracktool._napari._graph_conversion_util import get_coloured_graph_labels
+from tracktour._io_util import extract_im_centers
+from tracktour._flow_graph import FlowGraph
+from tracktour._napari._graph_conversion_util import get_coloured_graph_labels
 # from napari.qt.threading import create_worker
 
 class TrackingSolver(Container):

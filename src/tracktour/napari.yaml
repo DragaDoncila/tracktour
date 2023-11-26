@@ -1,0 +1,20 @@
+name: tracktour
+display_name: Tracktour
+contributions:
+  commands:
+    - id: tracktour.merge_explorer
+      title: Merge Explorer...
+      python_name: tracktour._napari._merge_explorer:MergeExplorer
+    - id: tracktour.track_solver
+      title: Track Solver...
+      python_name: tracktour._napari._solver:TrackingSolver
+    - id: tracktour.track_editor
+      title: Track Editor...
+      python_name: tracktour._napari._track_editor:TrackEditor
+  widgets:
+    - command: tracktour.merge_explorer
+      display_name: Merge Explorer
+    - command: tracktour.track_solver
+      display_name: Track Solver
+    - command: tracktour.track_editor
+      display_name: Track Editor

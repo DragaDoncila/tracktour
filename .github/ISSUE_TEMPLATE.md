@@ -1,4 +1,4 @@
-* tracktool version:
+* tracktour version:
 * Python version:
 * Operating System:
 
