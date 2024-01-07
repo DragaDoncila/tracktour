@@ -2,6 +2,7 @@ name: tracktour
 display_name: Tracktour
 contributions:
   commands:
+    # Widgets
     - id: tracktour.merge_explorer
       title: Merge Explorer...
       python_name: tracktour._napari._merge_explorer:MergeExplorer
@@ -11,6 +12,17 @@ contributions:
     - id: tracktour.track_editor
       title: Track Editor...
       python_name: tracktour._napari._track_editor:TrackEditor
+    - id: tracktour.edge_explorer
+      title: Edge Explorer...
+      python_name: tracktour._napari._edge_explorer:EdgeExplorer
+
+    # Readers
+    - id: tracktour.read_nx_tracks
+      title: Read .graphml track files
+      python_name: tracktour._napari._readers:get_graphml_reader
+    - id: tracktour.read_ctc_tiffs
+      title: Read CTC Tiffs
+      python_name: tracktour._napari._readers:get_ctc_tiff_reader
   widgets:
     - command: tracktour.merge_explorer
       display_name: Merge Explorer
@@ -18,3 +30,14 @@ contributions:
       display_name: Track Solver
     - command: tracktour.track_editor
       display_name: Track Editor
+    - command: tracktour.edge_explorer
+      display_name: Edge Explorer
+  readers:
+  - command: tracktour.read_nx_tracks
+    filename_patterns:
+    - '*.graphml'
+    accepts_directories: false
+  - command: tracktour.read_ctc_tiffs
+    filename_patterns:
+    - '*'
+    accepts_directories: true
