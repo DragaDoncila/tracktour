@@ -1,6 +1,7 @@
-from itertools import combinations
-import numpy as np
 import math
+from itertools import combinations
+
+import numpy as np
 
 
 def euclidean_cost_func(source_node, dest_node):

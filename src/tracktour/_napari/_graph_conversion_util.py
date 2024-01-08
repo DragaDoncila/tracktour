@@ -1,9 +1,10 @@
-from napari_graph import DirectedGraph
-import networkx as nx
 from collections import defaultdict
 
+import networkx as nx
 import pandas as pd
-from napari.layers import Tracks, Labels
+from napari.layers import Labels, Tracks
+from napari_graph import DirectedGraph
+
 from .._flow_graph import assign_track_id
 from .._viz_util import mask_by_id
 

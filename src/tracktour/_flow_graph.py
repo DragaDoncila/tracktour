@@ -1,23 +1,22 @@
-from copy import deepcopy
-from functools import partial
 import math
 import re
+import time
+from copy import deepcopy
+from functools import partial
 from typing import List, Tuple
 
-import numpy as np
-import networkx as nx
+import gurobipy as gp
 import igraph
-
+import networkx as nx
+import numpy as np
+import pandas as pd
 from napari_graph import DirectedGraph
 from scipy.spatial import KDTree
-import pandas as pd
-import gurobipy as gp
-import time
 
 from ._costs import (
-    euclidean_cost_func,
-    dist_to_edge_cost_func,
     closest_neighbour_child_cost,
+    dist_to_edge_cost_func,
+    euclidean_cost_func,
 )
 
 try:

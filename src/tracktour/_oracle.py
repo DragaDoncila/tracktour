@@ -1,5 +1,5 @@
-from traccuracy.matchers._compute_overlap import get_labels_with_overlap
 import numpy as np
+from traccuracy.matchers._compute_overlap import get_labels_with_overlap
 
 
 def store_solution_on_graph(opt_model, graph):
@@ -100,9 +100,9 @@ def blobs_intersect(gt_blob, comp_blob):
 def get_gt_unmatched_vertices_near_parent(
     coords, gt_coords, sol_ims, gt_ims, v_id, v_parents, dist, label_key="label"
 ):
+    import numpy as np
     from scipy.spatial import KDTree
     from traccuracy.matchers._compute_overlap import get_labels_with_overlap
-    import numpy as np
 
     problem_row = coords.loc[[v_id]]
     problem_t = problem_row["t"].values[0]

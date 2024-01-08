@@ -1,4 +1,5 @@
 import napari
+
 from tracktour import load_tiff_frames
 
 SEG_PATH = (

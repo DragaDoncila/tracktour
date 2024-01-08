@@ -1,13 +1,13 @@
+import warnings
+
 import networkx as nx
 import numpy as np
 import pandas as pd
-import warnings
-
 from dask.array import Array
 from magicgui.widgets import Container, PushButton, create_widget
 
-from tracktour._io_util import extract_im_centers
 from tracktour._flow_graph import FlowGraph
+from tracktour._io_util import extract_im_centers
 from tracktour._napari._graph_conversion_util import get_coloured_graph_labels
 
 # from napari.qt.threading import create_worker

@@ -1,12 +1,14 @@
-import igraph
-from tifffile import imread
-from skimage.measure import regionprops
-from skimage.graph import pixel_graph, central_pixel
-from skimage.morphology import skeletonize
 import glob
+
+import igraph
 import networkx as nx
 import numpy as np
 import pandas as pd
+from skimage.graph import central_pixel, pixel_graph
+from skimage.measure import regionprops
+from skimage.morphology import skeletonize
+from tifffile import imread
+
 from ._flow_graph import FlowGraph
 
 try:
