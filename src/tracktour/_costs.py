@@ -2,6 +2,7 @@ from itertools import combinations
 import numpy as np
 import math
 
+
 def euclidean_cost_func(source_node, dest_node):
     return np.linalg.norm(
         np.asarray(dest_node["coords"]) - np.asarray(source_node["coords"])
