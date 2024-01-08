@@ -1,7 +1,9 @@
-import pandas as pd
-from tracktour import FlowGraph
-import igraph
 import os
+
+import igraph
+import pandas as pd
+
+from tracktour import FlowGraph
 
 model_pth = "./_misc"
 coords = [
