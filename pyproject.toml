@@ -56,6 +56,7 @@ sources = ["src"]
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
 test = ["pytest>=6.0"]
+dev = ["pre-commit"]
 
 [project.urls]
 homepage = "https://github.com/DragaDoncila/tracktour"
