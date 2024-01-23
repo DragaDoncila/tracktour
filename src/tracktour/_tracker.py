@@ -1,6 +1,9 @@
+import math
 from collections import defaultdict
-from typing import Optional, Tuple
+from enum import Enum
+from typing import Dict, Optional, Tuple
 
+import gurobipy as gp
 import numpy as np
 import pandas as pd
 from scipy.spatial import KDTree
@@ -13,7 +16,30 @@ from ._costs import (
 )
 
 
+class VirtualVertices(Enum):
+    SOURCE = -1
+    APP = -2
+    DIV = -3
+    TARGET = -4
+
+
 class Tracker:
+    MIGRATION_EDGE_CAPACITY = 2
+    VIRTUAL_EDGE_CAPACITY = 1
+    MINIMAL_VERTEX_DEMAND = 1
+    VIRTUAL_INDEX_TO_LABEL = {
+        VirtualVertices.SOURCE.value: "s",
+        VirtualVertices.APP.value: "a",
+        VirtualVertices.DIV.value: "d",
+        VirtualVertices.TARGET.value: "t",
+    }
+
+    @staticmethod
+    def index_to_label(index):
+        if index in Tracker.VIRTUAL_INDEX_TO_LABEL:
+            return Tracker.VIRTUAL_INDEX_TO_LABEL[index]
+        return index
+
     def __init__(self, im_shape: Tuple[int, int], k_neighbours: int = 10) -> None:
         self.im_shape = im_shape
         self.k_neighbours = k_neighbours
@@ -23,7 +49,10 @@ class Tracker:
         detections: pd.DataFrame,
         time_key: str = "t",
         location_keys: Tuple[str] = ("y", "x"),
+        # TODO: is this needed/useful?
         value_key: Optional[str] = None,
+        # TODO: ?
+        # migration_only: bool = False,
     ):
         # build kd-trees
         kd_dict = self._build_trees(detections, time_key, location_keys)
@@ -31,33 +60,35 @@ class Tracker:
         # get candidate edges
         edge_df = self._get_candidate_edges(detections, time_key, kd_dict)
 
-        # migration cost (on edges) is just
-        edge_df["migration_cost"] = edge_df["distance"]
+        # migration cost (on edges) is just euclidean distance
+        edge_df["cost"] = edge_df["distance"]
 
-        # compute costs for division and appearance/exit - on nodes
+        # compute costs for division and appearance/exit - on vertices
         detections["enter_exit_cost"] = dist_to_edge_cost_func(
             self.im_shape, detections, location_keys
         )
         detections["div_cost"] = closest_neighbour_child_cost(
             detections, location_keys, edge_df
         )
+
         # build model
+        model = self._to_gurobi_model(detections, edge_df, location_keys)
 
         # solve, edge_df
 
     def _build_trees(
         self, detections: pd.DataFrame, time_key: str, location_keys: Tuple[str]
-    ):
+    ) -> Dict[int, KDTree]:
         """Build dictionary of KDTrees for each frame in detections
 
         Parameters
         ----------
         detections : pd.DataFrame
-            _description_
+            dataframe of real detections for generating tracks
         time_key : str
-            _description_
-        location_keys : Tuple[str]
-            _description_
+            column in `detections` denoting the frame number or time index
+        location_keys : Tuple[str, str, str]
+            tuple of columns in `detections` denoting spatial coordinates
 
         Returns
         -------
@@ -74,7 +105,31 @@ class Tracker:
 
         return kd_dict
 
-    def _get_candidate_edges(self, detections: pd.DataFrame, time_key: str, kd_dict):
+    def _get_candidate_edges(
+        self, detections: pd.DataFrame, time_key: str, kd_dict: Dict[int, KDTree]
+    ):
+        """Get edges joining vertices in frame t to candidate vertices in frame t+1
+
+        Parameters
+        ----------
+        detections : pd.DataFrame
+            dataframe of real detections for generating tracks
+        time_key : str
+            column in `detections` denoting the frame number or time index
+        kd_dict : Dict[int, KDTree]
+            dictionary of KDTree objects for each frame in detections
+
+        Returns
+        -------
+        pd.DataFrame
+            dataframe containing source, target and distance information for all
+            candidate edges. Columns `u` and `v` index into `detections`.
+
+        Raises
+        ------
+        ValueError
+            if a frame is empty and contains no detections
+        """
         all_edges = defaultdict(list)
         sorted_ts = sorted(detections[time_key].unique())
         for source_t in tqdm(
@@ -83,6 +138,7 @@ class Tracker:
             dest_t = source_t + 1
             source_frame_tree = kd_dict[source_t]
             dest_frame_tree = kd_dict[dest_t]
+            # TODO: I don't know that we actually want this do we...?
             if source_frame_tree.n == 0:
                 raise ValueError(f"KDTree for frame {source_t} is empty.")
             if dest_frame_tree.n == 0:
@@ -114,5 +170,175 @@ class Tracker:
         all_edges["u"] = np.concatenate(all_edges["u"])
         all_edges["v"] = np.concatenate(all_edges["v"])
         all_edges["distance"] = np.concatenate(all_edges["distance"])
+        all_edges["capacity"] = Tracker.MIGRATION_EDGE_CAPACITY
         edge_df = pd.DataFrame(all_edges)
         return edge_df
+
+    def _to_gurobi_model(self, detections, edge_df, location_keys):
+        """Takes detections and candidate edges and builds gurobi flow model.
+
+        The model will contain virtual vertices source, appearance, division
+        and target, and edges adjacent to these. Constraints are added to the
+        model to ensure flow conservation is preserved, vertex demand is met,
+        and division only occurs after appearance or migration.
+
+        Parameters
+        ----------
+        detections : pd.DataFrame
+            dataframe of real detections for generating tracks
+        edge_df : pd.DataFrame
+            dataframe of candidate edges for migration flow
+        location_keys : Tuple[str, str, str]
+            tuple of columns in `detections` denoting spatial coordinates
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+        full_det = self._get_all_vertices(detections, location_keys)
+        all_edges = self._get_all_edges(edge_df, detections)
+
+        model_var_info = {
+            (
+                e.Index,
+                Tracker.index_to_label(e.u),
+                Tracker.index_to_label(e.v),
+            ): e.cost
+            for e in all_edges.iteruples()
+        }
+        edge_capacities = edge_df.capacity.astype(int).values
+        var_names = list(model_var_info.keys())
+
+        m = gp.Model("tracks")
+        flow = m.addVars(
+            var_names, obj=model_var_info, lb=0, ub=edge_capacities, name="flow"
+        )
+        # flow = (edge_id, source_label, target_label)
+        src_out_edges = flow.select(
+            "*", Tracker.index_to_label(VirtualVertices.SOURCE.value), "*"
+        )
+        target_in_edges = flow.select(
+            "*", "*", Tracker.index_to_label(VirtualVertices.TARGET.value)
+        )
+        m.addConstr(sum(src_out_edges) == sum(target_in_edges), "src_target")
+
+        for vertex_id in full_det.index:
+            lbl = Tracker.index_to_label(vertex_id)
+            outgoing = flow.select("*", lbl, "*")
+            incoming = flow.select("*", "*", lbl)
+            m.addConstr(sum(incoming) == sum(outgoing), f"conserv_{lbl}")
+            m.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{lbl}")
+
+            # TODO: div optional?
+            div_incoming = flow.select(
+                "*", Tracker.index_to_label(VirtualVertices.DIV.value), lbl
+            )
+            m.addConstr(
+                sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{lbl}"
+            )
+
+        return m
+
+    def _get_all_vertices(self, detections, location_keys):
+        """Adds virtual vertices to copy of detections and returns.
+
+        Any columns for which virtual vertices have no value are given value -1.
+        Appearance and division cost of virtual vertices is 0.
+
+        Parameters
+        ----------
+        detections : pd.DataFrame
+            dataframe of real detections with indices of the natural numbers
+        location_keys : Tuple[str, str, str]
+            tuple of columns in `detections` denoting spatial coordinates
+
+        Returns
+        -------
+        pd.DataFrame
+            full dataframe of vertices including virtual vertices
+        """
+        v_vertices = {
+            # s, a, d, t
+            "Index": [
+                VirtualVertices.SOURCE.value,
+                VirtualVertices.APP.value,
+                VirtualVertices.DIV.value,
+                VirtualVertices.TARGET.value,
+            ],
+            "t": -1,
+            **{key: -1 for key in location_keys},
+            "enter_exit_cost": 0,
+            "div_cost": 0,
+        }
+        v_vertices_df = pd.DataFrame(v_vertices).set_index("Index")
+        full_det = pd.concat([detections.copy(), v_vertices_df])
+        return full_det
+
+    def _get_all_edges(self, edge_df, detections):
+        """Adds virtual edges to copy of edge_df and returns.
+
+        Connects source vertex to appearance and division. Connects
+        all real vertices to appearance and target with appropriate costs (0
+        for vertices in first frame and final frame respectively). `distance`
+        values for edges adjacent to virtual vertices are -1.
+
+        Parameters
+        ----------
+        edge_df : pd.DataFrame
+            dataframe of candidate edges for migration flow
+        detections : pd.DataFrame
+            dataframe of real detections for generating tracks
+
+        Returns
+        -------
+        pd.DataFrame
+            dataframe of all edges forming the network
+        """
+        min_t = detections.t.min()
+        max_t = detections.t.max()
+
+        # add SA and SD
+        v_edges = {
+            "u": VirtualVertices.SOURCE.value,
+            "v": [VirtualVertices.APP.value, VirtualVertices.DIV.value],
+            "capacity": math.inf,
+            "cost": 0,
+            "distance": -1,
+        }
+        # add appearance edges to all vertices
+        app_edges = {
+            "u": VirtualVertices.APP.value,
+            "v": detections.index.values,
+            "capacity": Tracker.VIRTUAL_EDGE_CAPACITY,
+            "cost": [
+                r.enter_exit_cost if r.t > min_t else 0 for r in detections.itertuples()
+            ],
+            "distance": -1,
+        }
+        # add disappearance edges to all vertices
+        exit_edges = {
+            "u": detections.index.values,
+            "v": VirtualVertices.TARGET.value,
+            "capacity": Tracker.VIRTUAL_EDGE_CAPACITY,
+            "cost": [
+                r.enter_exit_cost if r.t < max_t else 0 for r in detections.itertuples()
+            ],
+            "distance": -1,
+        }
+        # add div edges to all vertices (not in final frame)
+        divisible_detections = detections[detections.t < max_t]
+        div_edges = {
+            "u": VirtualVertices.DIV.value,
+            "v": divisible_detections.index.values,
+            "capacity": Tracker.VIRTUAL_EDGE_CAPACITY,
+            "cost": divisible_detections.div_cost.values,
+            "distance": -1,
+        }
+        all_edges = pd.concat(
+            [
+                pd.DataFrame(dct)
+                for dct in [edge_df.copy(), v_edges, app_edges, exit_edges, div_edges]
+            ]
+        )
+        return all_edges.reset_index()

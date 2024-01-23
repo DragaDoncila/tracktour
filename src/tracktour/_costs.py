@@ -47,6 +47,9 @@ def closest_neighbour_child_cost(detections, location_keys, edge_df):
     min_dists = []
     for det_row in detections.itertuples():
         potential_children = edge_df[edge_df["u"] == det_row.Index]
+        if potential_children.empty:
+            min_dists.append(-1)
+            continue
         src_coords = np.asarray([getattr(det_row, key) for key in location_keys])
         child_coords = {
             v: np.asarray(detections.loc[v, list(location_keys)])
@@ -64,7 +67,7 @@ def closest_neighbour_child_cost(detections, location_keys, edge_df):
             for u, v in combinations(child_coords.keys(), 2)
         ]
         min_dists.append(min(interchild_distances))
-        return min_dists
+    return min_dists
 
 
 # def dist_to_edge_cost_func(bounding_box_dimensions, node_coords):
