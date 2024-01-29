@@ -75,6 +75,7 @@ class Tracker:
         model = self._to_gurobi_model(detections, edge_df, location_keys)
 
         # solve, edge_df
+        model.optimize()
 
     def _build_trees(
         self, detections: pd.DataFrame, time_key: str, location_keys: Tuple[str]
@@ -205,35 +206,49 @@ class Tracker:
                 Tracker.index_to_label(e.u),
                 Tracker.index_to_label(e.v),
             ): e.cost
-            for e in all_edges.iteruples()
+            for e in all_edges.itertuples()
         }
-        edge_capacities = edge_df.capacity.astype(int).values
-        var_names = list(model_var_info.keys())
+        edge_capacities = all_edges.capacity.values
+        var_names = gp.tuplelist(list(model_var_info.keys()))
+
+        src_label = Tracker.index_to_label(VirtualVertices.SOURCE.value)
+        app_label = Tracker.index_to_label(VirtualVertices.APP.value)
+        div_label = Tracker.index_to_label(VirtualVertices.DIV.value)
+        target_label = Tracker.index_to_label(VirtualVertices.TARGET.value)
 
         m = gp.Model("tracks")
         flow = m.addVars(
             var_names, obj=model_var_info, lb=0, ub=edge_capacities, name="flow"
         )
         # flow = (edge_id, source_label, target_label)
-        src_out_edges = flow.select(
-            "*", Tracker.index_to_label(VirtualVertices.SOURCE.value), "*"
-        )
-        target_in_edges = flow.select(
-            "*", "*", Tracker.index_to_label(VirtualVertices.TARGET.value)
-        )
-        m.addConstr(sum(src_out_edges) == sum(target_in_edges), "src_target")
+        src_out_edges = flow.select("*", src_label, "*")
+        target_in_edges = flow.select("*", "*", target_label)
+        # whole network flow
+        m.addConstr(sum(src_out_edges) == sum(target_in_edges), "conserv_network")
 
-        for vertex_id in full_det.index:
+        # dummy vertex flow conservation
+        app_out = flow.select("*", app_label, "*")
+        app_in = flow.select("*", src_label, app_label)
+        m.addConstr(sum(app_in) == sum(app_out), "conserv_app")
+
+        div_out = flow.select("*", div_label, "*")
+        div_in = flow.select("*", src_label, div_label)
+        m.addConstr(sum(div_in) == sum(div_out), "conserv_div")
+
+        for vertex_id in detections.index:
             lbl = Tracker.index_to_label(vertex_id)
             outgoing = flow.select("*", lbl, "*")
             incoming = flow.select("*", "*", lbl)
+            # node-wise flow conservation
             m.addConstr(sum(incoming) == sum(outgoing), f"conserv_{lbl}")
+            # minimal flow into each node
             m.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{lbl}")
 
             # TODO: div optional?
             div_incoming = flow.select(
                 "*", Tracker.index_to_label(VirtualVertices.DIV.value), lbl
             )
+            # division only occurs after appearance or migration
             m.addConstr(
                 sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{lbl}"
             )
