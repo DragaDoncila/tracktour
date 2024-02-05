@@ -1,4 +1,5 @@
 import math
+import time
 from collections import defaultdict
 from enum import Enum
 from typing import Dict, Optional, Tuple
@@ -33,12 +34,19 @@ class Tracker:
         VirtualVertices.DIV.value: "d",
         VirtualVertices.TARGET.value: "t",
     }
+    VIRTUAL_LABEL_TO_INDEX = {v: k for k, v in VIRTUAL_INDEX_TO_LABEL.items()}
 
     @staticmethod
     def index_to_label(index):
         if index in Tracker.VIRTUAL_INDEX_TO_LABEL:
             return Tracker.VIRTUAL_INDEX_TO_LABEL[index]
         return index
+
+    @staticmethod
+    def label_to_index(label):
+        if label in Tracker.VIRTUAL_LABEL_TO_INDEX:
+            return Tracker.VIRTUAL_LABEL_TO_INDEX[label]
+        return label
 
     def __init__(self, im_shape: Tuple[int, int], k_neighbours: int = 10) -> None:
         self.im_shape = im_shape
@@ -54,6 +62,8 @@ class Tracker:
         # TODO: ?
         # migration_only: bool = False,
     ):
+        start = time.time()
+
         # build kd-trees
         kd_dict = self._build_trees(detections, time_key, location_keys)
 
@@ -72,10 +82,22 @@ class Tracker:
         )
 
         # build model
-        model = self._to_gurobi_model(detections, edge_df, location_keys)
+        model, vars, all_edges, all_vertices = self._to_gurobi_model(
+            detections, edge_df, location_keys
+        )
 
-        # solve, edge_df
+        dur = time.time() - start
+
+        # solve and store solution on edges
         model.optimize()
+        self._store_solution(model, all_edges)
+
+        print(f"Building took {dur} seconds")
+        # filter down to just migration edges
+        migration_edges = all_edges[
+            (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
+        ].copy()
+        return migration_edges
 
     def _build_trees(
         self, detections: pd.DataFrame, time_key: str, location_keys: Tuple[str]
@@ -253,7 +275,7 @@ class Tracker:
                 sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{lbl}"
             )
 
-        return m
+        return m, flow, all_edges, full_det
 
     def _get_all_vertices(self, detections, location_keys):
         """Adds virtual vertices to copy of detections and returns.
@@ -325,7 +347,7 @@ class Tracker:
         app_edges = {
             "u": VirtualVertices.APP.value,
             "v": detections.index.values,
-            "capacity": Tracker.VIRTUAL_EDGE_CAPACITY,
+            "capacity": Tracker.MIGRATION_EDGE_CAPACITY,
             "cost": [
                 r.enter_exit_cost if r.t > min_t else 0 for r in detections.itertuples()
             ],
@@ -335,7 +357,7 @@ class Tracker:
         exit_edges = {
             "u": detections.index.values,
             "v": VirtualVertices.TARGET.value,
-            "capacity": Tracker.VIRTUAL_EDGE_CAPACITY,
+            "capacity": Tracker.MIGRATION_EDGE_CAPACITY,
             "cost": [
                 r.enter_exit_cost if r.t < max_t else 0 for r in detections.itertuples()
             ],
@@ -357,3 +379,26 @@ class Tracker:
             ]
         )
         return all_edges.reset_index()
+
+    def _store_solution(self, model, all_edges):
+        """Stores solution from gurobi model in edge dataframe.
+
+        Parameters
+        ----------
+        model : gurobipy.Model
+            model with optimal solution used to extract flow
+        all_edges : pd.DataFrame
+            dataframe of all edges forming the network
+        """
+        sol_dict = {
+            tuple(
+                [
+                    int(Tracker.label_to_index(idx))
+                    for idx in v.VarName.strip("flow[").strip("]").split(",")
+                ]
+            ): v.X
+            for v in model.getVars()
+        }
+        edge_index, flow = zip(*[(k[0], v) for k, v in sol_dict.items()])
+        all_edges.loc[list(edge_index), "flow"] = list(flow)
+        return all_edges

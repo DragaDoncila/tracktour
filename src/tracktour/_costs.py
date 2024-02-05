@@ -55,6 +55,7 @@ def closest_neighbour_child_cost(detections, location_keys, edge_df):
             v: np.asarray(detections.loc[v, list(location_keys)])
             for v in potential_children["v"]
         }
+        # TODO: use pdist
         # let's also do closest child in here
         interchild_distances = [
             # distance between potential children in the next frame
