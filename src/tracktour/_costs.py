@@ -2,6 +2,7 @@ import math
 from itertools import combinations
 
 import numpy as np
+from scipy.spatial.distance import pdist
 
 
 def euclidean_cost_func(source_node, dest_node):
@@ -43,6 +44,42 @@ def min_pairwise_distance_cost(child_distances):
 #     return min_dist
 
 
+def calc_row_idx(k, n):
+    return int(
+        math.ceil(
+            (1 / 2.0) * (-((-8 * k + 4 * n**2 - 4 * n - 7) ** 0.5) + 2 * n - 1) - 1
+        )
+    )
+
+
+def elem_in_i_rows(i, n):
+    return i * (n - 1 - i) + (i * (i + 1)) // 2
+
+
+def calc_col_idx(k, i, n):
+    return int(n - elem_in_i_rows(i + 1, n) + k)
+
+
+def condensed_to_square(pdist_i, num_children):
+    """Given condensed index, get children indices in the square form.
+
+    Parameters
+    ----------
+    pdist_i : int
+        index of distance in condensed form
+    num_children : int
+        number of original points for pdist
+
+    Returns
+    -------
+    int, int
+        indices of original points that gave distance
+    """
+    i = calc_row_idx(pdist_i, num_children)
+    j = calc_col_idx(pdist_i, i, num_children)
+    return i, j
+
+
 def closest_neighbour_child_cost(detections, location_keys, edge_df):
     min_dists = []
     for det_row in detections.itertuples():
@@ -51,23 +88,20 @@ def closest_neighbour_child_cost(detections, location_keys, edge_df):
             min_dists.append(-1)
             continue
         src_coords = np.asarray([getattr(det_row, key) for key in location_keys])
-        child_coords = {
-            v: np.asarray(detections.loc[v, list(location_keys)])
-            for v in potential_children["v"]
-        }
-        # TODO: use pdist
-        # let's also do closest child in here
-        interchild_distances = [
-            # distance between potential children in the next frame
-            np.linalg.norm(child_coords[u] - child_coords[v]) +
-            # distance from parent to closest potential child
-            min(
-                np.linalg.norm(src_coords - child_coords[u]),
-                np.linalg.norm(src_coords - child_coords[v]),
-            )
-            for u, v in combinations(child_coords.keys(), 2)
-        ]
-        min_dists.append(min(interchild_distances))
+        child_coord_array = detections.loc[
+            potential_children["v"], list(location_keys)
+        ].values
+        dists_to_child = np.linalg.norm(src_coords - child_coord_array, axis=1)
+        inter_child_dists = pdist(child_coord_array)
+        div_costs = inter_child_dists + np.asarray(
+            [
+                dists_to_child[
+                    list(condensed_to_square(i, len(child_coord_array)))
+                ].min()
+                for i in range(len(inter_child_dists))
+            ]
+        )
+        min_dists.append(div_costs.min())
     return min_dists
 
 
