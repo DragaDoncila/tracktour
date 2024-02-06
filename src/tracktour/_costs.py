@@ -81,16 +81,21 @@ def condensed_to_square(pdist_i, num_children):
 
 
 def closest_neighbour_child_cost(detections, location_keys, edge_df):
-    min_dists = []
-    for det_row in detections.itertuples():
-        potential_children = edge_df[edge_df["u"] == det_row.Index]
-        if potential_children.empty:
-            min_dists.append(-1)
-            continue
+    # TODO: assumes groups in groupby are positioned by order in detections
+    location_col_indices = [detections.columns.get_loc(key) for key in location_keys]
+    edges_by_source = edge_df.groupby("u")
+    divisible_detections = detections[detections.t < detections.t.max()]
+    det_outgoing_edges = zip(divisible_detections.itertuples(), edges_by_source)
+    min_dists = [-1 for _ in range(len(detections))]
+    for det_row, (group_source, edge_group) in det_outgoing_edges:
+        assert det_row.Index == group_source, "Detections and edges are not aligned."
         src_coords = np.asarray([getattr(det_row, key) for key in location_keys])
-        child_coord_array = detections.loc[
-            potential_children["v"], list(location_keys)
-        ].values
+        child_coord_array = np.asarray(
+            [
+                [detections.iat[v, l] for l in location_col_indices]
+                for v in edge_group["v"].values
+            ]
+        )
         dists_to_child = np.linalg.norm(src_coords - child_coord_array, axis=1)
         inter_child_dists = pdist(child_coord_array)
         div_costs = inter_child_dists + np.asarray(
@@ -101,7 +106,7 @@ def closest_neighbour_child_cost(detections, location_keys, edge_df):
                 for i in range(len(inter_child_dists))
             ]
         )
-        min_dists.append(div_costs.min())
+        min_dists[det_row.Index] = div_costs.min()
     return min_dists
 
 

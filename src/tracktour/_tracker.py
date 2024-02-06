@@ -62,6 +62,25 @@ class Tracker:
         # TODO: ?
         # migration_only: bool = False,
     ):
+        """_summary_
+
+        Parameters
+        ----------
+        detections : pd.DataFrame
+            dataframe where each row is a detection, with coordinates at location_keys and time at time_key. Index must be sequential integers from 0. Detections
+            must be sorted by time.
+        time_key : str, optional
+            _description_, by default "t"
+        location_keys : Tuple[str], optional
+            _description_, by default ("y", "x")
+        value_key : Optional[str], optional
+            _description_, by default None
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
         start = time.time()
 
         # build kd-trees
@@ -183,6 +202,7 @@ class Tracker:
             )
             # grab the vertex indices of closest neighbours using position indexing into detections
             # TODO: dangerous? maybe...
+            # this will break if detections are intermingled in time (should copy detections and return our "tracked_detections" or similar)
             all_edges["v"].append(
                 detections[detections.t == dest_t]
                 .iloc[k_closest_indices.ravel()]
