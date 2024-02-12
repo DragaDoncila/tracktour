@@ -43,7 +43,7 @@ def min_pairwise_distance_cost(child_distances):
 #             min_dist = total_dist
 #     return min_dist
 
-
+# Following four functions reproduced from https://stackoverflow.com/a/36867493
 def calc_row_idx(k, n):
     return int(
         math.ceil(

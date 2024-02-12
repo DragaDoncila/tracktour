@@ -24,9 +24,24 @@ class VirtualVertices(Enum):
     TARGET = -4
 
 
+class Tracked:
+    # just returned flat unless debug is on?
+    tracked_edges
+    tracked_detections
+
+    all_edges
+    all_vertices
+    model
+    build_time
+    solve_time
+    wall_time
+
+
 class Tracker:
-    MIGRATION_EDGE_CAPACITY = 2
-    VIRTUAL_EDGE_CAPACITY = 1
+    MERGE_EDGE_CAPACITY = 2
+    # can be set to 2 when we are allowing "cheat" appearance
+    APPEARANCE_EDGE_CAPACITY = 1
+    DIVISION_EDGE_CAPACITY = 1
     MINIMAL_VERTEX_DEMAND = 1
     VIRTUAL_INDEX_TO_LABEL = {
         VirtualVertices.SOURCE.value: "s",
@@ -55,7 +70,7 @@ class Tracker:
     def solve(
         self,
         detections: pd.DataFrame,
-        time_key: str = "t",
+        frame_key: str = "t",
         location_keys: Tuple[str] = ("y", "x"),
         # TODO: is this needed/useful?
         value_key: Optional[str] = None,
@@ -67,9 +82,9 @@ class Tracker:
         Parameters
         ----------
         detections : pd.DataFrame
-            dataframe where each row is a detection, with coordinates at location_keys and time at time_key. Index must be sequential integers from 0. Detections
-            must be sorted by time.
-        time_key : str, optional
+            dataframe where each row is a detection, with coordinates at location_keys and time at frame_key. Index must be sequential integers from 0. Detections
+            must be sorted by frame.
+        frame_key : str, optional
             _description_, by default "t"
         location_keys : Tuple[str], optional
             _description_, by default ("y", "x")
@@ -79,15 +94,17 @@ class Tracker:
         Returns
         -------
         _type_
-            _description_
+            _description_d
         """
+        # TODO: copy/validate detections
+        # TODO: store all_edges, full_det
         start = time.time()
 
         # build kd-trees
-        kd_dict = self._build_trees(detections, time_key, location_keys)
+        kd_dict = self._build_trees(detections, frame_key, location_keys)
 
         # get candidate edges
-        edge_df = self._get_candidate_edges(detections, time_key, kd_dict)
+        edge_df = self._get_candidate_edges(detections, frame_key, kd_dict)
 
         # migration cost (on edges) is just euclidean distance
         edge_df["cost"] = edge_df["distance"]
@@ -116,10 +133,11 @@ class Tracker:
         migration_edges = all_edges[
             (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
         ].copy()
+
         return migration_edges
 
     def _build_trees(
-        self, detections: pd.DataFrame, time_key: str, location_keys: Tuple[str]
+        self, detections: pd.DataFrame, frame_key: str, location_keys: Tuple[str]
     ) -> Dict[int, KDTree]:
         """Build dictionary of KDTrees for each frame in detections
 
@@ -127,7 +145,7 @@ class Tracker:
         ----------
         detections : pd.DataFrame
             dataframe of real detections for generating tracks
-        time_key : str
+        frame_key : str
             column in `detections` denoting the frame number or time index
         location_keys : Tuple[str, str, str]
             tuple of columns in `detections` denoting spatial coordinates
@@ -138,9 +156,9 @@ class Tracker:
             dictionary of KDTree objects for each frame in detections
         """
         kd_dict = {}
-        sorted_ts = sorted(detections[time_key].unique())
+        sorted_ts = sorted(detections[frame_key].unique())
         for t in sorted_ts:
-            frame_detections = detections[detections[time_key] == t][
+            frame_detections = detections[detections[frame_key] == t][
                 list(location_keys)
             ]
             kd_dict[t] = KDTree(frame_detections)
@@ -148,7 +166,7 @@ class Tracker:
         return kd_dict
 
     def _get_candidate_edges(
-        self, detections: pd.DataFrame, time_key: str, kd_dict: Dict[int, KDTree]
+        self, detections: pd.DataFrame, frame_key: str, kd_dict: Dict[int, KDTree]
     ):
         """Get edges joining vertices in frame t to candidate vertices in frame t+1
 
@@ -156,7 +174,7 @@ class Tracker:
         ----------
         detections : pd.DataFrame
             dataframe of real detections for generating tracks
-        time_key : str
+        frame_key : str
             column in `detections` denoting the frame number or time index
         kd_dict : Dict[int, KDTree]
             dictionary of KDTree objects for each frame in detections
@@ -173,7 +191,7 @@ class Tracker:
             if a frame is empty and contains no detections
         """
         all_edges = defaultdict(list)
-        sorted_ts = sorted(detections[time_key].unique())
+        sorted_ts = sorted(detections[frame_key].unique())
         for source_t in tqdm(
             sorted_ts[:-1], total=len(sorted_ts) - 1, desc="Computing candidate edges"
         ):
@@ -213,7 +231,7 @@ class Tracker:
         all_edges["u"] = np.concatenate(all_edges["u"])
         all_edges["v"] = np.concatenate(all_edges["v"])
         all_edges["distance"] = np.concatenate(all_edges["distance"])
-        all_edges["capacity"] = Tracker.MIGRATION_EDGE_CAPACITY
+        all_edges["capacity"] = self.MERGE_EDGE_CAPACITY
         edge_df = pd.DataFrame(all_edges)
         return edge_df
 
@@ -367,7 +385,7 @@ class Tracker:
         app_edges = {
             "u": VirtualVertices.APP.value,
             "v": detections.index.values,
-            "capacity": Tracker.MIGRATION_EDGE_CAPACITY,
+            "capacity": self.APPEARANCE_EDGE_CAPACITY,
             "cost": [
                 r.enter_exit_cost if r.t > min_t else 0 for r in detections.itertuples()
             ],
@@ -377,7 +395,7 @@ class Tracker:
         exit_edges = {
             "u": detections.index.values,
             "v": VirtualVertices.TARGET.value,
-            "capacity": Tracker.MIGRATION_EDGE_CAPACITY,
+            "capacity": self.MERGE_EDGE_CAPACITY,
             "cost": [
                 r.enter_exit_cost if r.t < max_t else 0 for r in detections.itertuples()
             ],
@@ -388,7 +406,7 @@ class Tracker:
         div_edges = {
             "u": VirtualVertices.DIV.value,
             "v": divisible_detections.index.values,
-            "capacity": Tracker.VIRTUAL_EDGE_CAPACITY,
+            "capacity": self.DIVISION_EDGE_CAPACITY,
             "cost": divisible_detections.div_cost.values,
             "distance": -1,
         }
