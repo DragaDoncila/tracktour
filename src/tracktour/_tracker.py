@@ -7,14 +7,11 @@ from typing import Dict, Optional, Tuple
 import gurobipy as gp
 import numpy as np
 import pandas as pd
+from pydantic import BaseModel, ConfigDict, Field
 from scipy.spatial import KDTree
 from tqdm import tqdm
 
-from ._costs import (
-    closest_neighbour_child_cost,
-    dist_to_edge_cost_func,
-    euclidean_cost_func,
-)
+from ._costs import closest_neighbour_child_cost, dist_to_edge_cost_func
 
 
 class VirtualVertices(Enum):
@@ -24,19 +21,48 @@ class VirtualVertices(Enum):
     TARGET = -4
 
 
-class Tracked:
-    # just returned flat unless debug is on?
-    tracked_edges
-    tracked_detections
+class Tracked(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    # user facing solution
+    tracked_edges: pd.DataFrame = Field(
+        description="Dataframe of edges in solution. Columns u and v are indices into `tracked_detections`"
+    )
+    tracked_detections: pd.DataFrame = Field(
+        description="Datafarme of detections with indices of the natural numbers. Indices of `tracked_edges` are indices into this dataframe. Coordinates of detections are available at location_keys."
+    )
 
-    all_edges
-    all_vertices
-    model
-    build_time
-    solve_time
-    wall_time
+    # only available in debug mode
+    all_edges: Optional[pd.DataFrame] = Field(
+        default=None,
+        description="Dataframe of all edges in the network with cost and flow information. Columns u and v are indices into `all_vertices`. Virtual vertices are labelled with negative indices. Only available in debug mode.",
+    )
+    all_vertices: Optional[pd.DataFrame] = Field(
+        default=None,
+        description="Dataframe of all vertices in the network with cost and flow information. Virtual vertices are labelled with negative indices. Only available in debug mode.",
+    )
+    model: Optional[gp.Model] = Field(
+        default=None,
+        description="Solved gurobi model of instance. Only available in debug mode.",
+    )
+    build_time: float = Field(
+        default=-1,
+        description="Time taken to build the candidate graph of the instance including cost computation. Only available in debug mode.",
+    )
+    gp_model_time: float = Field(
+        default=-1,
+        description="Time taken to build the gurobi model from the candidate graph. Only available in debug mode.",
+    )
+    solve_time: float = Field(
+        default=-1,
+        description="Time taken to solve the gurobi model as reported by gurobipy. Only available in debug mode.",
+    )
+    wall_time: float = Field(
+        default=-1,
+        description="Total time taken to build and solve the instance. Only available in debug mode.",
+    )
 
 
+# TODO: should also be pydantic?
 class Tracker:
     MERGE_EDGE_CAPACITY = 2
     # can be set to 2 when we are allowing "cheat" appearance
@@ -50,6 +76,7 @@ class Tracker:
         VirtualVertices.TARGET.value: "t",
     }
     VIRTUAL_LABEL_TO_INDEX = {v: k for k, v in VIRTUAL_INDEX_TO_LABEL.items()}
+    DEBUG_MODE = False
 
     @staticmethod
     def index_to_label(index):
@@ -118,23 +145,44 @@ class Tracker:
         )
 
         # build model
-        model, vars, all_edges, all_vertices = self._to_gurobi_model(
+        model, all_edges, all_vertices, gb_time = self._to_gurobi_model(
             detections, edge_df, location_keys
         )
 
-        dur = time.time() - start
+        build_duration = time.time() - start
 
         # solve and store solution on edges
         model.optimize()
         self._store_solution(model, all_edges)
+        solve_duration = model.Runtime
 
-        print(f"Building took {dur} seconds")
+        print(f"Building took {build_duration} seconds")
+
         # filter down to just migration edges
         migration_edges = all_edges[
             (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
         ].copy()
 
-        return migration_edges
+        wall_time = time.time() - start
+
+        tracked_info = {
+            "tracked_edges": migration_edges,
+            "tracked_detections": detections,
+        }
+        if self.DEBUG_MODE:
+            tracked_info.update(
+                {
+                    "all_edges": all_edges,
+                    "all_vertices": all_vertices,
+                    "model": model,
+                    "build_time": build_duration,
+                    "gp_model_time": gb_time,
+                    "solve_time": solve_duration,
+                    "wall_time": wall_time,
+                }
+            )
+        tracked = Tracked(**tracked_info)
+        return tracked
 
     def _build_trees(
         self, detections: pd.DataFrame, frame_key: str, location_keys: Tuple[str]
@@ -257,6 +305,7 @@ class Tracker:
         _type_
             _description_
         """
+        start = time.time()
         full_det = self._get_all_vertices(detections, location_keys)
         all_edges = self._get_all_edges(edge_df, detections)
 
@@ -312,8 +361,8 @@ class Tracker:
             m.addConstr(
                 sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{lbl}"
             )
-
-        return m, flow, all_edges, full_det
+        build_time = time.time() - start
+        return m, all_edges, full_det, build_time
 
     def _get_all_vertices(self, detections, location_keys):
         """Adds virtual vertices to copy of detections and returns.
