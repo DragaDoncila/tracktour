@@ -22,7 +22,6 @@ class VirtualVertices(Enum):
 
 
 class Tracked(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
     # user facing solution
     tracked_edges: pd.DataFrame = Field(
         description="Dataframe of edges in solution. Columns u and v are indices into `tracked_detections`"
@@ -60,6 +59,9 @@ class Tracked(BaseModel):
         default=-1,
         description="Total time taken to build and solve the instance. Only available in debug mode.",
     )
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 # TODO: should also be pydantic?
@@ -253,7 +255,7 @@ class Tracker:
             # not querying for more neighbours than are in the frame
             k = (
                 self.k_neighbours
-                if dest_frame_tree.n > self.k_neighbours
+                if dest_frame_tree.n >= self.k_neighbours
                 else dest_frame_tree.n
             )
             # passing 1 makes query return an int so we pass a list containing 1 instead
