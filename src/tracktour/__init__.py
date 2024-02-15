@@ -1,6 +1,10 @@
 """Network flow based tracker with guided error correction"""
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = "0.0.1"
+try:
+    __version__ = version("tracktour")
+except PackageNotFoundError:
+    __version__ = "uninstalled"
 __author__ = "Draga Doncila Pop"
 __email__ = "ddoncila@gmail.com"
 

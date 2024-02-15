@@ -1,6 +1,6 @@
 # https://peps.python.org/pep-0517/
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 # https://peps.python.org/pep-0621/
@@ -47,7 +47,7 @@ classifiers = [
 ]
 
 [tool.hatch.version]
-path = "src/tracktour/__init__.py"
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["src"]
