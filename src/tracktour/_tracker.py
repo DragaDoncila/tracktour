@@ -124,7 +124,6 @@ class Tracker:
             _description_d
         """
         # TODO: copy/validate detections
-        # TODO: store all_edges, full_det
         start = time.time()
 
         # build kd-trees
