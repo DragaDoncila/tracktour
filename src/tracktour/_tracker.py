@@ -1,5 +1,6 @@
 import math
 import time
+import warnings
 from collections import defaultdict
 from enum import Enum
 from typing import Dict, Optional, Tuple
@@ -65,6 +66,15 @@ class Tracked(BaseModel):
 
 
 # TODO: should also be pydantic?
+"""
+Assumptions that need to be enforced/documented/removed:
+
+- detections are grouped by frame and sorted (can't have interleaved detections)
+- the frame key is a direct index into the segmentation
+- ALL COORDINATES ARE POSITIVE and within the given `im_shape`
+"""
+
+
 class Tracker:
     MERGE_EDGE_CAPACITY = 2
     # can be set to 2 when we are allowing "cheat" appearance
@@ -147,7 +157,7 @@ class Tracker:
 
         # build model
         model, all_edges, all_vertices, gb_time = self._to_gurobi_model(
-            detections, edge_df, location_keys
+            detections, edge_df, frame_key, location_keys
         )
 
         build_duration = time.time() - start
@@ -241,17 +251,22 @@ class Tracker:
         """
         all_edges = defaultdict(list)
         sorted_ts = sorted(detections[frame_key].unique())
-        for source_t in tqdm(
-            sorted_ts[:-1], total=len(sorted_ts) - 1, desc="Computing candidate edges"
+        for i in tqdm(
+            range(len(sorted_ts) - 1),
+            total=len(sorted_ts) - 1,
+            desc="Computing candidate edges",
         ):
-            dest_t = source_t + 1
+            source_t = sorted_ts[i]
+            dest_t = sorted_ts[i + 1]
+            # TODO: I don't know that we actually want this do we...?
+            if dest_t != source_t + 1:
+                warnings.warn(
+                    UserWarning(
+                        f"Connecting frames {source_t} and {dest_t}. They are not consecutive. Are you missing detections?"
+                    )
+                )
             source_frame_tree = kd_dict[source_t]
             dest_frame_tree = kd_dict[dest_t]
-            # TODO: I don't know that we actually want this do we...?
-            if source_frame_tree.n == 0:
-                raise ValueError(f"KDTree for frame {source_t} is empty.")
-            if dest_frame_tree.n == 0:
-                raise ValueError(f"KDTree for frame {dest_t} is empty.")
             # not querying for more neighbours than are in the frame
             k = (
                 self.k_neighbours
@@ -265,13 +280,13 @@ class Tracker:
                 source_frame_tree.data, k=k
             )
             all_edges["u"].append(
-                np.repeat(detections[detections.t == source_t].index.values, k)
+                np.repeat(detections[detections[frame_key] == source_t].index.values, k)
             )
             # grab the vertex indices of closest neighbours using position indexing into detections
             # TODO: dangerous? maybe...
             # this will break if detections are intermingled in time (should copy detections and return our "tracked_detections" or similar)
             all_edges["v"].append(
-                detections[detections.t == dest_t]
+                detections[detections[frame_key] == dest_t]
                 .iloc[k_closest_indices.ravel()]
                 .index.values
             )
@@ -284,7 +299,7 @@ class Tracker:
         edge_df = pd.DataFrame(all_edges)
         return edge_df
 
-    def _to_gurobi_model(self, detections, edge_df, location_keys):
+    def _to_gurobi_model(self, detections, edge_df, frame_key, location_keys):
         """Takes detections and candidate edges and builds gurobi flow model.
 
         The model will contain virtual vertices source, appearance, division
@@ -298,6 +313,8 @@ class Tracker:
             dataframe of real detections for generating tracks
         edge_df : pd.DataFrame
             dataframe of candidate edges for migration flow
+        frame_key : str
+            column in `detections` denoting the frame number or time index
         location_keys : Tuple[str, str, str]
             tuple of columns in `detections` denoting spatial coordinates
 
@@ -307,7 +324,7 @@ class Tracker:
             _description_
         """
         start = time.time()
-        full_det = self._get_all_vertices(detections, location_keys)
+        full_det = self._get_all_vertices(detections, frame_key, location_keys)
         all_edges = self._get_all_edges(edge_df, detections)
 
         model_var_info = {
@@ -365,7 +382,7 @@ class Tracker:
         build_time = time.time() - start
         return m, all_edges, full_det, build_time
 
-    def _get_all_vertices(self, detections, location_keys):
+    def _get_all_vertices(self, detections, frame_key, location_keys):
         """Adds virtual vertices to copy of detections and returns.
 
         Any columns for which virtual vertices have no value are given value -1.
@@ -391,7 +408,7 @@ class Tracker:
                 VirtualVertices.DIV.value,
                 VirtualVertices.TARGET.value,
             ],
-            "t": -1,
+            frame_key: -1,
             **{key: -1 for key in location_keys},
             "enter_exit_cost": 0,
             "div_cost": 0,
