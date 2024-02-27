@@ -1,9 +1,13 @@
+import math
+import re
+
 import numpy as np
 import pandas as pd
 import pytest
 from scipy.spatial import KDTree
 
 from tracktour import Tracker
+from tracktour._tracker import VirtualVertices
 
 
 @pytest.fixture
@@ -178,4 +182,129 @@ def test_get_all_vertices_different_keys(get_detections):
     assert vertices.iloc[0].col == detections.iloc[0].col
 
 
-# test 3d
+def test_get_all_edges(get_detections):
+    detections = get_detections()
+    tracker = Tracker(im_shape=(20, 40))
+    kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
+    edges = tracker._get_candidate_edges(detections, "t", kd_dict)
+    enter_exit_cost, div_cost = tracker._compute_detection_costs(
+        detections, ("y", "x"), edges
+    )
+    detections["enter_exit_cost"] = enter_exit_cost
+    detections["div_cost"] = div_cost
+    all_edges = tracker._get_all_edges(edges, detections, "t")
+
+    # all vertices connected to appearance
+    assert len(all_edges[all_edges.u == VirtualVertices.APP.value]) == len(detections)
+    # first frame appears free
+    first_frame_det = detections[detections.t == 0].index
+    assert np.all(
+        all_edges[
+            (all_edges.u == VirtualVertices.APP.value)
+            & all_edges.v.isin(first_frame_det)
+        ]["cost"]
+        == 0
+    )
+    # last frame exits free
+    last_frame_det = detections[detections.t == 9].index
+    assert np.all(
+        all_edges[
+            (all_edges.u.isin(last_frame_det)) & all_edges.v
+            == VirtualVertices.TARGET.value
+        ]["cost"]
+        == 0
+    )
+    # all but final frame can divide
+    divisible_det = detections[detections.t < 9].index
+    assert len(all_edges[all_edges.u == VirtualVertices.DIV.value]) == len(
+        divisible_det
+    )
+
+
+def test_to_gurobi_model(human_detections):
+    detections, im_shape = human_detections
+    tracker = Tracker(im_shape=im_shape, k_neighbours=2)
+    kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
+    edges = tracker._get_candidate_edges(detections, "t", kd_dict)
+    edges["cost"] = edges["distance"]
+    enter_exit_cost, div_cost = tracker._compute_detection_costs(
+        detections, ("y", "x"), edges
+    )
+    detections["enter_exit_cost"] = enter_exit_cost
+    detections["div_cost"] = div_cost
+    m, _, _, _ = tracker._to_gurobi_model(detections, edges, "t", ("y", "x"))
+    # assert that we have a flow conserv & demand constraint for each detection
+    constr_names = [constr.ConstrName for constr in m.getConstrs()]
+    num_detections = len(detections)
+    num_div_detections = len(detections[detections.t < 2])
+    conserv_pattern = re.compile(r"conserv_[0-9]+")
+    demand_pattern = re.compile(r"demand_[0-9]+")
+    div_pattern = re.compile(r"div_[0-9]+")
+    assert (
+        len(list(filter(lambda n: conserv_pattern.match(n), constr_names)))
+        == num_detections
+    )
+    assert (
+        len(list(filter(lambda n: demand_pattern.match(n), constr_names)))
+        == num_detections
+    )
+
+    # assert that we have a div constraint for divisible detections
+    assert (
+        len(list(filter(lambda n: div_pattern.match(n), constr_names)))
+        == num_div_detections
+    )
+
+    # assert that we have the network constraint and dummmy constraints
+    assert "conserv_network" in constr_names
+    assert "conserv_app" in constr_names
+    assert "conserv_div" in constr_names
+
+    # assert on variable capacities
+    for var in m.getVars():
+        assert var.LB == 0
+        # appearance and division edges
+        if ",a," in var.VarName or ",d," in var.VarName:
+            assert var.UB == 1
+        # dummy-dummy edges
+        elif "s" in var.VarName:
+            assert var.UB == math.inf
+        # migration and exit edges
+        else:
+            assert var.UB == 2
+
+
+def test_solve_public(human_detections):
+    detections, im_shape = human_detections
+    tracker = Tracker(im_shape=im_shape, k_neighbours=2)
+    tracked = tracker.solve(detections, "t", ("y", "x"))
+    solution_edges = np.asarray(
+        [[0, 3], [1, 5], [2, 6], [3, 7], [4, 8], [5, 9], [6, 10]], dtype=int
+    )
+    np.testing.assert_array_equal(
+        tracked.tracked_edges[["u", "v"]].values, solution_edges
+    )
+    np.testing.assert_equal(tracked.tracked_edges["flow"].values, 1)
+
+
+def test_solve_with_divisions(human_detections):
+    pass
+
+
+def test_solve_debug(human_detections):
+    detections, im_shape = human_detections
+    tracker = Tracker(im_shape=im_shape, k_neighbours=2)
+    tracker.DEBUG_MODE = True
+    tracker.solve(detections, "t", ("y", "x"))
+
+
+def test_big_instance_unchanged():
+    # generate and write out a big set of detections
+    # solve it and write out the solution
+    # add everything to git and assert on dataframes being the same
+
+    pass
+
+
+# test 3d da
+# test cost functions specifically

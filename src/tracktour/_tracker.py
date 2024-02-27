@@ -148,12 +148,11 @@ class Tracker:
         edge_df["cost"] = edge_df["distance"]
 
         # compute costs for division and appearance/exit - on vertices
-        detections["enter_exit_cost"] = dist_to_edge_cost_func(
-            self.im_shape, detections, location_keys
-        )
-        detections["div_cost"] = closest_neighbour_child_cost(
+        enter_exit_cost, div_cost = self._compute_detection_costs(
             detections, location_keys, edge_df
         )
+        detections["enter_exit_cost"] = enter_exit_cost
+        detections["div_cost"] = div_cost
 
         # build model
         model, all_edges, all_vertices, gb_time = self._to_gurobi_model(
@@ -325,7 +324,7 @@ class Tracker:
         """
         start = time.time()
         full_det = self._get_all_vertices(detections, frame_key, location_keys)
-        all_edges = self._get_all_edges(edge_df, detections)
+        all_edges = self._get_all_edges(edge_df, detections, frame_key)
 
         model_var_info = {
             (
@@ -375,10 +374,12 @@ class Tracker:
             div_incoming = flow.select(
                 "*", Tracker.index_to_label(VirtualVertices.DIV.value), lbl
             )
-            # division only occurs after appearance or migration
-            m.addConstr(
-                sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{lbl}"
-            )
+            if len(div_incoming):
+                # division only occurs after appearance or migration
+                m.addConstr(
+                    sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{lbl}"
+                )
+        m.update()
         build_time = time.time() - start
         return m, all_edges, full_det, build_time
 
@@ -417,7 +418,14 @@ class Tracker:
         full_det = pd.concat([detections.copy(), v_vertices_df])
         return full_det
 
-    def _get_all_edges(self, edge_df, detections):
+    def _compute_detection_costs(self, detections, location_keys, edge_df):
+        enter_exit_cost = dist_to_edge_cost_func(
+            self.im_shape, detections, location_keys
+        )
+        div_cost = closest_neighbour_child_cost(detections, location_keys, edge_df)
+        return enter_exit_cost, div_cost
+
+    def _get_all_edges(self, edge_df, detections, frame_key):
         """Adds virtual edges to copy of edge_df and returns.
 
         Connects source vertex to appearance and division. Connects
@@ -431,14 +439,16 @@ class Tracker:
             dataframe of candidate edges for migration flow
         detections : pd.DataFrame
             dataframe of real detections for generating tracks
+        frame_key : str
+            column in `detections` denoting the frame number or time index
 
         Returns
         -------
         pd.DataFrame
             dataframe of all edges forming the network
         """
-        min_t = detections.t.min()
-        max_t = detections.t.max()
+        min_t = detections[frame_key].min()
+        max_t = detections[frame_key].max()
 
         # add SA and SD
         v_edges = {
@@ -454,7 +464,8 @@ class Tracker:
             "v": detections.index.values,
             "capacity": self.APPEARANCE_EDGE_CAPACITY,
             "cost": [
-                r.enter_exit_cost if r.t > min_t else 0 for r in detections.itertuples()
+                r.enter_exit_cost if getattr(r, frame_key) > min_t else 0
+                for r in detections.itertuples()
             ],
             "distance": -1,
         }
@@ -464,12 +475,13 @@ class Tracker:
             "v": VirtualVertices.TARGET.value,
             "capacity": self.MERGE_EDGE_CAPACITY,
             "cost": [
-                r.enter_exit_cost if r.t < max_t else 0 for r in detections.itertuples()
+                r.enter_exit_cost if getattr(r, frame_key) < max_t else 0
+                for r in detections.itertuples()
             ],
             "distance": -1,
         }
         # add div edges to all vertices (not in final frame)
-        divisible_detections = detections[detections.t < max_t]
+        divisible_detections = detections[detections[frame_key] < max_t]
         div_edges = {
             "u": VirtualVertices.DIV.value,
             "v": divisible_detections.index.values,
