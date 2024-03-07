@@ -4,7 +4,6 @@ from collections import defaultdict
 import igraph
 from magicgui.widgets import Container, PushButton, create_widget
 
-from .._flow_graph import FlowGraph
 from ._graph_conversion_util import get_coloured_graph_labels
 
 

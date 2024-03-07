@@ -5,8 +5,8 @@ import pandas as pd
 from napari.layers import Labels, Tracks
 from napari_graph import DirectedGraph
 
-from .._flow_graph import assign_track_id
-from .._viz_util import mask_by_id
+from tracktour._graph_util import assign_track_id
+from tracktour._viz_util import mask_by_id
 
 
 def _get_parents(node_df, max_track_id, sol):
@@ -73,8 +73,23 @@ def get_tracks_from_nxg(nxg: "nx.DiGraph"):
 #     return sol_napari_layer
 
 
-def get_coloured_graph_labels(flow_graph, segmentation):
-    napari_graph_layer = flow_graph.to_napari_graph()
+def get_napari_graph(tracked, location_keys, frame_key):
+    nodes = tracked.tracked_detections
+    mig_edges = tracked.tracked_edges
+    pos_keys = [frame_key] + location_keys
+    mig_graph = nx.from_pandas_edgelist(
+        mig_edges, source="u", target="v", edge_attr=["flow"], create_using=nx.DiGraph
+    )
+    mig_graph.add_nodes_from(nodes[pos_keys].to_dict(orient="index").items())
+    pos = {
+        tpl.index: tuple([getattr(tpl, k) for k in pos_keys])
+        for tpl in nodes.itertuples()
+    }
+    nx.set_node_attributes(mig_graph, pos, "pos")
+
+
+def get_coloured_graph_labels(tracked, location_keys, frame_key, segmentation):
+    napari_graph_layer = get_napari_graph(tracked, location_keys, frame_key)
     subgraph = napari_graph_layer.metadata["subgraph"]
     tracks_layer = get_tracks_from_nxg(subgraph)
     napari_graph_layer.metadata["tracks"] = tracks_layer

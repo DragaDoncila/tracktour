@@ -106,6 +106,10 @@ class Tracker:
         self.im_shape = im_shape
         self.k_neighbours = k_neighbours
 
+        self.location_keys = None
+        self.frame_key = None
+        self.value_key = None
+
     def solve(
         self,
         detections: pd.DataFrame,
@@ -135,10 +139,15 @@ class Tracker:
         _type_
             _description_d
         """
+        self.location_keys = location_keys
+        self.frame_key = frame_key
+        self.value_key = value_key
+
         # TODO: copy/validate detections
         start = time.time()
 
         # build kd-trees
+        # TODO: stop passing stuff around now that you store it as an attribute
         kd_dict = self._build_trees(detections, frame_key, location_keys)
 
         # get candidate edges
