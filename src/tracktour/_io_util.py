@@ -89,6 +89,8 @@ def get_centers(segmentation):
     n_frames = segmentation.shape[0]
     for i in tqdm(range(n_frames), desc="Extracting Centroids"):
         current_frame = segmentation[i]
+        centers = []
+        labels = []
         props = regionprops(current_frame)
         if props:
             current_centers = [(i, *prop.centroid) for prop in props]
