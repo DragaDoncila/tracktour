@@ -2,14 +2,14 @@ import networkx as nx
 import numpy as np
 
 
-def mask_by_id(nodes, seg):
+def mask_by_id(nodes, seg, frame_key, value_key):
     masks = np.zeros_like(seg)
     max_id = nodes["track-id"].max()
     for i in range(1, max_id + 1):
         track_nodes = nodes[nodes["track-id"] == i]
         for row in track_nodes.itertuples():
-            t = row.t
-            orig_label = row.pixel_value
+            t = getattr(row, frame_key)
+            orig_label = getattr(row, value_key)
             mask = seg[t] == orig_label
             masks[t][mask] = i
 
@@ -17,7 +17,7 @@ def mask_by_id(nodes, seg):
     unassigned = nodes[nodes["track-id"] == -1]
     for row in unassigned.itertuples():
         t = row.t
-        orig_label = row.pixel_value
+        orig_label = getattr(row, value_key)
         mask = seg[t] == orig_label
         masks[t][mask] = 1
 

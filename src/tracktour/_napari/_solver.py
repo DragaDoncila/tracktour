@@ -70,12 +70,16 @@ class TrackingSolver(Container):
             segmentation = np.asarray(segmentation)
         coords_df, min_t, max_t, corners = extract_im_centers(segmentation)
 
-        tracker = Tracker(segmentation.shape, k_neighbours=n_neighbours)
-        tracked = tracker.solve(coords_df)
+        tracker = Tracker(segmentation.shape[1:], k_neighbours=n_neighbours)
+        tracked = tracker.solve(coords_df, value_key="label")
 
         # make graph layer and tracks layer from solution
         napari_graph_layer, coloured_seg_layer = get_coloured_graph_labels(
-            tracked, tracker.location_keys, tracker.frame_key, segmentation
+            tracked,
+            tracker.location_keys,
+            tracker.frame_key,
+            tracker.value_key,
+            segmentation,
         )
 
         self._viewer.add_layer(napari_graph_layer)
