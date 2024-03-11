@@ -22,7 +22,6 @@ dependencies = [
     "pydantic",
     "scipy",
     "networkx",
-    "igraph",
     "tqdm",
     "pandas",
     "gurobipy",

@@ -1,14 +1,7 @@
 import math
-from itertools import combinations
 
 import numpy as np
 from scipy.spatial.distance import pdist
-
-
-def euclidean_cost_func(source_node, dest_node):
-    return np.linalg.norm(
-        np.asarray(dest_node["coords"]) - np.asarray(source_node["coords"])
-    )
 
 
 # Following four functions reproduced from https://stackoverflow.com/a/36867493

@@ -25,33 +25,6 @@ def mask_by_id(nodes, seg, frame_key, value_key):
     return masks
 
 
-def get_point_colour(sol, merges, bad_parents):
-    merges = set(merges)
-    bad_parents = set(bad_parents)
-    colours = ["white" for _ in range(sol.number_of_nodes())]
-    for node in merges:
-        parents = [edge[0] for edge in sol.in_edges(node)]
-        children = [edge[1] for edge in sol.out_edges(node)]
-
-        # colour the parents orange
-        for parent in parents:
-            colours[parent] = "orange"
-        # colour the merge node red
-        colours[node] = "red"
-        # colour the children yellow
-        for child in children:
-            colours[child] = "yellow"
-
-    for node in bad_parents:
-        children = [edge[1] for edge in sol.out_edges(node)]
-        # colour children pink
-        for child in children:
-            colours[child] = "pink"
-        # colour parent purple
-        colours[node] = "purple"
-    return colours
-
-
 def store_colour_vs_of_interest(
     graph, vs, pred_colour, v_colour, succ_colour, orig_colour=False
 ):

@@ -1,7 +1,5 @@
 import glob
 
-import igraph
-import networkx as nx
 import numpy as np
 import pandas as pd
 from skimage.graph import central_pixel, pixel_graph

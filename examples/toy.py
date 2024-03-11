@@ -1,6 +1,3 @@
-import os
-
-import igraph
 import pandas as pd
 
 from tracktour import Tracker
