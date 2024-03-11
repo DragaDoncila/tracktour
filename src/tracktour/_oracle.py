@@ -1,5 +1,15 @@
+import warnings
+
 import numpy as np
-from traccuracy.matchers._compute_overlap import get_labels_with_overlap
+
+try:
+    from traccuracy.matchers._compute_overlap import get_labels_with_overlap
+except ModuleNotFoundError:
+    warnings.warn(
+        UserWarning(
+            "traccuracy not installed, cannot use oracle without it. If you are not using the oracle, ignore this! Oracle will be removed from tracktour in future versions."
+        )
+    )
 
 
 def store_solution_on_graph(opt_model, graph):
