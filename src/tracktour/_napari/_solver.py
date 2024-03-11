@@ -81,7 +81,7 @@ class TrackingSolver(Container):
             tracker.value_key,
             segmentation,
         )
-
+        napari_graph_layer.metadata["k_neighbours"] = n_neighbours
         self._viewer.add_layer(napari_graph_layer)
         self._viewer.add_layer(coloured_seg_layer)
         seg_layer.visible = False

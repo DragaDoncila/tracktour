@@ -17,6 +17,7 @@ def mask_by_id(nodes, seg, frame_key, value_key):
     unassigned = nodes[nodes["track-id"] == -1]
     for row in unassigned.itertuples():
         t = row.t
+        # TODO: breaks for brand new detections that aren't present in the segmentation!
         orig_label = getattr(row, value_key)
         mask = seg[t] == orig_label
         masks[t][mask] = 1

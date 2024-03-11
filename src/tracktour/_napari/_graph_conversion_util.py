@@ -1,6 +1,7 @@
 from collections import defaultdict
 
 import networkx as nx
+import numpy as np
 import pandas as pd
 from napari.layers import Graph, Labels, Tracks
 from napari_graph import DirectedGraph
@@ -101,3 +102,27 @@ def get_coloured_graph_labels(
     }
     nx.set_node_attributes(subgraph, {k: v[1] for k, v in color_dict.items()}, "color")
     return napari_graph_layer, masked_seg
+
+
+def get_detections_from_napari_graph(graph, segmentation):
+    """Get detections dataframe from a napari_graph object and segmentation.
+
+    Segmentation is required for the pixel values of each detection,
+    and supports recolouring after the detections are solved.
+
+    Parameters
+    ----------
+    graph : napari_graph.DirectedGraph
+        graph to extract detections from. edges are ignored
+    segmentation: np.ndarray
+        2D+T or 3D+T array of segmentation labels
+    """
+    node_ids = graph.get_nodes()
+    node_coords = graph.coords_buffer[node_ids]
+    node_labels = segmentation[tuple(node_coords.astype(int).T)]
+    all_node_info = np.hstack([node_coords, node_labels.reshape(-1, 1)])
+    detections_df = pd.DataFrame(all_node_info, columns=["t", "y", "x", "label"])
+    detections_df["label"] = detections_df["label"].astype(int)
+    detections_df["t"] = detections_df["t"].astype(int)
+    detections_df = detections_df.sort_values(["t"]).reset_index()
+    return detections_df
