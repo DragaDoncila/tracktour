@@ -15,19 +15,16 @@ authors = [
 ]
 dynamic = ["version"]
 dependencies = [
-    "arboretum",
-    "napari",
-    "napari-graph",
-    "numpy",
-    "pydantic",
-    "scipy",
-    "networkx",
-    "tqdm",
-    "pandas",
     "gurobipy",
-    "tifffile", # maybe should be optional?
     "imagecodecs",
-    "scikit-image"
+    "networkx",
+    "numpy",
+    "pandas",
+    "pydantic",
+    "scikit-image",
+    "scipy",
+    "tifffile", # maybe should be optional?
+    "tqdm",
 ]
 classifiers = [
   "Intended Audience :: Science/Research",
@@ -55,6 +52,11 @@ sources = ["src"]
 # extras
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
+napari = [
+    "arboretum",
+    "napari",
+    "napari-graph",
+]
 test = ["pytest>=6.0"]
 dev = ["pre-commit"]
 
