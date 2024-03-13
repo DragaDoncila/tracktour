@@ -6,9 +6,9 @@ import pandas as pd
 from dask.array import Array
 from magicgui.widgets import Container, PushButton, create_widget
 
-from tracktour._flow_graph import FlowGraph
 from tracktour._io_util import extract_im_centers
 from tracktour._napari._graph_conversion_util import get_coloured_graph_labels
+from tracktour._tracker import Tracker
 
 # from napari.qt.threading import create_worker
 
@@ -70,20 +70,18 @@ class TrackingSolver(Container):
             segmentation = np.asarray(segmentation)
         coords_df, min_t, max_t, corners = extract_im_centers(segmentation)
 
-        flow_graph = FlowGraph(
-            corners,
-            coords=coords_df,
-            n_neighbours=n_neighbours,
-            min_t=min_t,
-            max_t=max_t,
-        )
-        flow_graph.solve()
+        tracker = Tracker(segmentation.shape[1:], k_neighbours=n_neighbours)
+        tracked = tracker.solve(coords_df, value_key="label")
 
         # make graph layer and tracks layer from solution
         napari_graph_layer, coloured_seg_layer = get_coloured_graph_labels(
-            flow_graph, segmentation
+            tracked,
+            tracker.location_keys,
+            tracker.frame_key,
+            tracker.value_key,
+            segmentation,
         )
-
+        napari_graph_layer.metadata["k_neighbours"] = n_neighbours
         self._viewer.add_layer(napari_graph_layer)
         self._viewer.add_layer(coloured_seg_layer)
         seg_layer.visible = False

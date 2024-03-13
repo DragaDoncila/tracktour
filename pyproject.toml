@@ -1,6 +1,6 @@
 # https://peps.python.org/pep-0517/
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 # https://peps.python.org/pep-0621/
@@ -15,19 +15,16 @@ authors = [
 ]
 dynamic = ["version"]
 dependencies = [
-    "arboretum",
-    "napari",
-    "napari-graph",
-    "numpy",
-    "scipy",
-    "networkx",
-    "igraph",
-    "tqdm",
-    "pandas",
     "gurobipy",
-    "tifffile", # maybe should be optional?
     "imagecodecs",
-    "scikit-image"
+    "networkx",
+    "numpy",
+    "pandas",
+    "pydantic",
+    "scikit-image",
+    "scipy",
+    "tifffile", # maybe should be optional?
+    "tqdm",
 ]
 classifiers = [
   "Intended Audience :: Science/Research",
@@ -46,7 +43,7 @@ classifiers = [
 ]
 
 [tool.hatch.version]
-path = "src/tracktour/__init__.py"
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["src"]
@@ -55,6 +52,11 @@ sources = ["src"]
 # extras
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
+napari = [
+    "arboretum",
+    "napari",
+    "napari-graph",
+]
 test = ["pytest>=6.0"]
 dev = ["pre-commit"]
 

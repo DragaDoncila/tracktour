@@ -1,7 +1,5 @@
 import glob
 
-import igraph
-import networkx as nx
 import numpy as np
 import pandas as pd
 from skimage.graph import central_pixel, pixel_graph
@@ -9,20 +7,10 @@ from skimage.measure import regionprops
 from skimage.morphology import skeletonize
 from tifffile import imread
 
-from ._flow_graph import FlowGraph
-
 try:
     from napari.utils import progress as tqdm
 except ImportError:
     from tqdm import tqdm
-
-
-def load_graph(seg_path, n_neighbours=10):
-    ims, coords, min_t, max_t, corners = get_im_centers(seg_path)
-    graph = FlowGraph(
-        corners, coords=coords, n_neighbours=n_neighbours, min_t=min_t, max_t=max_t
-    )
-    return ims, graph
 
 
 def load_tiff_frames(im_dir):
@@ -89,6 +77,8 @@ def get_centers(segmentation):
     n_frames = segmentation.shape[0]
     for i in tqdm(range(n_frames), desc="Extracting Centroids"):
         current_frame = segmentation[i]
+        centers = []
+        labels = []
         props = regionprops(current_frame)
         if props:
             current_centers = [(i, *prop.centroid) for prop in props]
@@ -108,23 +98,3 @@ def get_centers(segmentation):
             label_center_mapping.pop(0, None)
             labels, centers = zip(*label_center_mapping.items())
         yield centers, labels
-
-
-def store_flow(nx_sol, ig_sol):
-    ig_sol._g.es.set_attribute_values("flow", 0)
-    flow_es = nx.get_edge_attributes(nx_sol, "flow")
-    for e_id, flow in flow_es.items():
-        src, target = e_id
-        ig_sol._g.es[ig_sol._g.get_eid(src, target)]["flow"] = flow
-
-
-def load_sol_flow_graph(sol_pth, seg_pth):
-    sol = nx.read_graphml(sol_pth, node_type=int)
-    sol_ims = load_tiff_frames(seg_pth)
-    sol_g = igraph.Graph.from_networkx(sol)
-    im_dim = sol_ims.shape[1:]
-    im_dim = [tuple([0 for _ in range(len(im_dim))]), im_dim]
-    min_t = 0
-    max_t = sol_ims.shape[0] - 1
-    sol_g = FlowGraph(im_dim, graph=sol_g, min_t=min_t, max_t=max_t)
-    return sol_g, sol_ims

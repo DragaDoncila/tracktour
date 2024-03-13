@@ -1,10 +1,7 @@
 import warnings
-from enum import Enum, auto
-from typing import Any, Sequence
 
 import networkx as nx
 import numpy as np
-from magicgui import magic_factory
 from magicgui.widgets import ComboBox, Container, create_widget
 
 DIMGREY = np.array([0.4, 0.4, 0.4, 1])

@@ -1,9 +1,6 @@
-import os
-
-import igraph
 import pandas as pd
 
-from tracktour import FlowGraph
+from tracktour import Tracker
 
 model_pth = "./_misc"
 coords = [
@@ -20,13 +17,7 @@ coords = [
 coords = pd.DataFrame(coords, columns=["t", "y", "x"])
 
 pixel_vals = [1, 2, 3, 1, 2, 3, 1, 2, 3]
-graph = FlowGraph(
-    [(0, 0), (100, 100)],
-    coords=coords,
-    min_t=0,
-    max_t=2,
-    pixel_vals=pixel_vals,
-    migration_only=True,
-)
-igraph.plot(graph._g, layout=graph._g.layout("rt"))
-graph._to_lp(os.path.join(model_pth, "labelled_constraints.lp"))
+tracker = Tracker(im_shape=(100, 100), k_neighbours=2)
+tracked = tracker.solve(coords)
+print(tracked.tracked_detections)
+print(tracked.tracked_edges)

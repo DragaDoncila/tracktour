@@ -1,12 +1,13 @@
 from collections import defaultdict
 
 import networkx as nx
+import numpy as np
 import pandas as pd
-from napari.layers import Labels, Tracks
+from napari.layers import Graph, Labels, Tracks
 from napari_graph import DirectedGraph
 
-from .._flow_graph import assign_track_id
-from .._viz_util import mask_by_id
+from tracktour._graph_util import assign_track_id
+from tracktour._viz_util import mask_by_id
 
 
 def _get_parents(node_df, max_track_id, sol):
@@ -50,38 +51,44 @@ def get_tracks_from_nxg(nxg: "nx.DiGraph"):
     return track_layer
 
 
-# def get_napari_graph_from_nxg(nxg: 'nx.DiGraph', seg_layer: 'napari.layers.Labels') -> 'napari.layers.Graph':
-#     for _, node_info in nxg.nodes(data=True):
-#         label = node_info["track-id"]
-#         node_info["color"] = seg_layer.get_color(label)
-#     sol_node_df = pd.DataFrame.from_dict(nxg.nodes, orient='index')
-#     sol_napari_graph = DirectedGraph(edges=nxg.edges, coords=sol_node_df[["t", "y", "x"]])
-#     sol_tracks = get_tracks_from_nxg(nxg)
-#     sol_napari_layer = Graph(
-#         sol_napari_graph,
-#         name="Solution Graph",
-#         out_of_slice_display=True,
-#         ndim=3,
-#         size=5,
-#         properties=sol_node_df.drop(columns=['color']),
-#         face_color=list(nx.get_node_attributes(nxg, "color").values()),
-#         metadata={
-#             'nxg': nxg,
-#             'tracks': sol_tracks,
-#         },
-#     )
-#     return sol_napari_layer
+def get_napari_graph(tracked, location_keys, frame_key, value_key):
+    nodes = tracked.tracked_detections
+    mig_edges = tracked.tracked_edges
+    pos_keys = [frame_key] + list(location_keys)
+    mig_graph = nx.from_pandas_edgelist(
+        mig_edges, source="u", target="v", edge_attr=["flow"], create_using=nx.DiGraph
+    )
+    mig_graph.add_nodes_from(
+        nodes[pos_keys + [value_key]].to_dict(orient="index").items()
+    )
+    pos = {
+        tpl.Index: tuple([getattr(tpl, k) for k in pos_keys])
+        for tpl in nodes.itertuples()
+    }
+    nx.set_node_attributes(mig_graph, pos, "pos")
+    napari_graph = DirectedGraph.from_networkx(mig_graph)
+    graph_layer = Graph(
+        napari_graph,
+        name="Solution Graph",
+        out_of_slice_display=True,
+        ndim=3,
+        size=5,
+        metadata={"nxg": mig_graph, "subgraph": mig_graph},
+    )
+    return graph_layer
 
 
-def get_coloured_graph_labels(flow_graph, segmentation):
-    napari_graph_layer = flow_graph.to_napari_graph()
+def get_coloured_graph_labels(
+    tracked, location_keys, frame_key, value_key, segmentation
+):
+    napari_graph_layer = get_napari_graph(tracked, location_keys, frame_key, value_key)
     subgraph = napari_graph_layer.metadata["subgraph"]
     tracks_layer = get_tracks_from_nxg(subgraph)
     napari_graph_layer.metadata["tracks"] = tracks_layer
 
     # recolor segmentation and graph points by track-id
     sol_node_df = pd.DataFrame.from_dict(subgraph.nodes, orient="index")
-    masks = mask_by_id(sol_node_df, segmentation)
+    masks = mask_by_id(sol_node_df, segmentation, frame_key, value_key)
     masked_seg = Labels(masks, name="Track Coloured Seg", visible=False)
 
     # subgraph, tracks layer and graph layer **all** need to know about colour :<<<<
@@ -95,3 +102,27 @@ def get_coloured_graph_labels(flow_graph, segmentation):
     }
     nx.set_node_attributes(subgraph, {k: v[1] for k, v in color_dict.items()}, "color")
     return napari_graph_layer, masked_seg
+
+
+def get_detections_from_napari_graph(graph, segmentation):
+    """Get detections dataframe from a napari_graph object and segmentation.
+
+    Segmentation is required for the pixel values of each detection,
+    and supports recolouring after the detections are solved.
+
+    Parameters
+    ----------
+    graph : napari_graph.DirectedGraph
+        graph to extract detections from. edges are ignored
+    segmentation: np.ndarray
+        2D+T or 3D+T array of segmentation labels
+    """
+    node_ids = graph.get_nodes()
+    node_coords = graph.coords_buffer[node_ids]
+    node_labels = segmentation[tuple(node_coords.astype(int).T)]
+    all_node_info = np.hstack([node_coords, node_labels.reshape(-1, 1)])
+    detections_df = pd.DataFrame(all_node_info, columns=["t", "y", "x", "label"])
+    detections_df["label"] = detections_df["label"].astype(int)
+    detections_df["t"] = detections_df["t"].astype(int)
+    detections_df = detections_df.sort_values(["t"]).reset_index()
+    return detections_df
