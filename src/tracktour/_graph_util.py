@@ -1,4 +1,5 @@
 import networkx as nx
+import pandas as pd
 
 
 def assign_track_id(nx_sol):
@@ -54,3 +55,24 @@ def assign_intertrack_edges(nx_g: "nx.DiGraph"):
         # destination has two parents
         if len(nx_g.in_edges(dest)) > 1:
             nx_g.edges[e]["is_intertrack_edge"] = 1
+
+
+def get_ctc_tracks(tracked_sol):
+    """Given nx solution graph, return CTC formatted track df.
+
+    Each row in the df defines a track using ID, start frame, end frame, parent
+
+    Parameters
+    ----------
+    tracked_sol : nx.DiGraph
+        networkx solution graph with track-id assigned
+    """
+    node_df = pd.DataFrame.from_dict(tracked_sol.nodes, orient="index")
+    # group solution by track id
+    print(node_df)
+
+    # get min_t and max_t for each group
+
+    # for each end node (at max_t), follow edge to its parents
+
+    # TODO!!!!: ARBITRARILY PICK THE CLOSEST PARENT???

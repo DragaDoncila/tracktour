@@ -3,9 +3,10 @@ import time
 import warnings
 from collections import defaultdict
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import gurobipy as gp
+import networkx as nx
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,6 +30,13 @@ class Tracked(BaseModel):
     )
     tracked_detections: pd.DataFrame = Field(
         description="Datafarme of detections with indices of the natural numbers. Indices of `tracked_edges` are indices into this dataframe. Coordinates of detections are available at location_keys."
+    )
+    frame_key: str = Field(description="Key in detections denoting frame.")
+    location_keys: List[str] = Field(
+        description="Ordered list of keys in detections denoting coordinates."
+    )
+    value_key: str = Field(
+        description="Key in detections denoting integer value of the object."
     )
 
     # only available in debug mode
@@ -63,6 +71,20 @@ class Tracked(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+    def as_nx_digraph(self):
+        edges = self.tracked_edges
+        nodes = self.tracked_detections
+        sol_graph = nx.from_pandas_edgelist(
+            edges,
+            "u",
+            "v",
+            ["flow"],  # optional but may be useful for debugging or finding merge edges
+            create_using=nx.DiGraph,
+        )
+        det_keys = [self.frame_key] + self.location_keys + [self.value_key]
+        sol_graph.add_nodes_from(nodes[det_keys].to_dict(orient="index").items())
+        return sol_graph
 
 
 # TODO: should also be pydantic?
@@ -115,8 +137,8 @@ class Tracker:
         detections: pd.DataFrame,
         frame_key: str = "t",
         location_keys: Tuple[str] = ("y", "x"),
-        # TODO: is this needed/useful?
-        value_key: Optional[str] = None,
+        # TODO: we should be able to make this optional
+        value_key: Optional[str] = "label",
         # TODO: ?
         # migration_only: bool = False,
     ):
@@ -187,6 +209,9 @@ class Tracker:
         tracked_info = {
             "tracked_edges": migration_edges,
             "tracked_detections": detections,
+            "frame_key": self.frame_key,
+            "location_keys": self.location_keys,
+            "value_key": self.value_key,
         }
         if self.DEBUG_MODE:
             tracked_info.update(

@@ -1,8 +1,9 @@
 import networkx as nx
 import numpy as np
+import pandas as pd
 
 
-def mask_by_id(nodes, seg, frame_key, value_key):
+def mask_by_id(nodes: pd.DataFrame, seg: np.ndarray, frame_key: str, value_key: str):
     masks = np.zeros_like(seg)
     max_id = nodes["track-id"].max()
     for i in range(1, max_id + 1):
