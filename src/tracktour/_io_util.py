@@ -7,7 +7,7 @@ from skimage.measure import regionprops
 from skimage.morphology import skeletonize
 from tifffile import imread
 
-from tracktour._graph_util import assign_track_id, get_ctc_tracks
+from tracktour._graph_util import assign_track_id, get_ctc_tracks, remove_merges
 from tracktour._viz_util import mask_by_id
 
 try:
@@ -30,11 +30,13 @@ def load_tiff_frames(im_dir):
     return im
 
 
-def get_ctc_output(original_seg, tracked_nx, frame_key, value_key):
-    max_id = assign_track_id(tracked_nx)
-    node_df = pd.DataFrame.from_dict(tracked_nx.nodes, orient="index")
+def get_ctc_output(original_seg, tracked_nx, frame_key, value_key, location_keys):
+    # remove merges from tracked_nx - keep closest node
+    mergeless = remove_merges(tracked_nx, location_keys)
+    max_id = assign_track_id(mergeless)
+    node_df = pd.DataFrame.from_dict(mergeless.nodes, orient="index")
     relabelled_seg = mask_by_id(node_df, original_seg, frame_key, value_key)
-    track_df = get_ctc_tracks(tracked_nx)
+    track_df = get_ctc_tracks(mergeless)
     return relabelled_seg, track_df
 
 

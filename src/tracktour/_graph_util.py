@@ -1,4 +1,7 @@
+import copy
+
 import networkx as nx
+import numpy as np
 import pandas as pd
 
 
@@ -28,6 +31,7 @@ def assign_track_id(nx_sol):
             if source_out > 1:
                 track_id += 1
             elif nx_sol.in_degree(dest) > 1:
+                # we've already allocated for this node
                 if nx_sol.nodes[dest]["track-id"] != -1:
                     continue
                 else:
@@ -36,6 +40,36 @@ def assign_track_id(nx_sol):
 
         track_id += 1
     return track_id
+
+
+def remove_merges(nx_g: "nx.DiGraph", location_keys: list = ["y", "x"]):
+    """Remove merge nodes from the graph. Returns a copy.
+
+    For each node with more than one incoming edge, keep the
+    edge with source closest to the merge node.
+
+    Args:
+        nx_g (nx.DiGraph): directed tracking graph
+    """
+    n_incoming = nx_g.in_degree()
+    merge_nodes = [node for node, degree in n_incoming if degree > 1]
+    furthest_parent_edges = []
+    for node in merge_nodes:
+        merge_coords = np.asarray([nx_g.nodes[node][key] for key in location_keys])
+        parent_coords = {
+            parent: np.asarray([nx_g.nodes[parent][key] for key in location_keys])
+            for parent in nx_g.predecessors(node)
+        }
+        closest = min(
+            parent_coords, key=lambda x: np.linalg.norm(merge_coords - parent_coords[x])
+        )
+        parent_coords.pop(closest)
+        furthest_parent_edges.extend(
+            [(parent, node) for parent in parent_coords.keys()]
+        )
+    mergeless = copy.deepcopy(nx_g)
+    mergeless.remove_edges_from(furthest_parent_edges)
+    return mergeless
 
 
 def assign_intertrack_edges(nx_g: "nx.DiGraph"):
@@ -57,7 +91,7 @@ def assign_intertrack_edges(nx_g: "nx.DiGraph"):
             nx_g.edges[e]["is_intertrack_edge"] = 1
 
 
-def get_ctc_tracks(tracked_sol):
+def get_ctc_tracks(tracked_sol: "nx.DiGraph", frame_key: str = "t"):
     """Given nx solution graph, return CTC formatted track df.
 
     Each row in the df defines a track using ID, start frame, end frame, parent
@@ -68,11 +102,34 @@ def get_ctc_tracks(tracked_sol):
         networkx solution graph with track-id assigned
     """
     node_df = pd.DataFrame.from_dict(tracked_sol.nodes, orient="index")
-    # group solution by track id
-    print(node_df)
+    t_only = node_df[["track-id", frame_key]]
+    grouped = t_only.groupby("track-id")
+    start_frame_idx = grouped.idxmin()
+    end_frames_idx = grouped.idxmax()
 
-    # get min_t and max_t for each group
-
-    # for each end node (at max_t), follow edge to its parents
-
-    # TODO!!!!: ARBITRARILY PICK THE CLOSEST PARENT???
+    tids = []
+    start_frames = []
+    end_frames = []
+    parent_tids = []
+    for tid in grouped.groups:
+        tids.append(tid)
+        start_node = start_frame_idx.loc[tid].iloc[0]
+        start_frame = tracked_sol.nodes[start_node][frame_key]
+        predecessors = list(tracked_sol.predecessors(start_node))
+        if len(predecessors) == 0:
+            parent_tid = 0
+        else:
+            parent_tid = tracked_sol.nodes[predecessors[0]]["track-id"]
+        end_frame = tracked_sol.nodes[end_frames_idx.loc[tid].iloc[0]][frame_key]
+        start_frames.append(start_frame)
+        end_frames.append(end_frame)
+        parent_tids.append(parent_tid)
+    track_df = pd.DataFrame(
+        {
+            "track-id": tids,
+            "start": start_frames,
+            "end": end_frames,
+            "parent": parent_tids,
+        }
+    )
+    return track_df
