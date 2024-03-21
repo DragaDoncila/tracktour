@@ -1,4 +1,5 @@
 import glob
+import os
 
 import numpy as np
 import pandas as pd
@@ -7,6 +8,9 @@ from skimage.measure import regionprops
 from skimage.morphology import skeletonize
 from tifffile import imread
 
+from tracktour._graph_util import assign_track_id, get_ctc_tracks, remove_merges
+from tracktour._viz_util import mask_by_id
+
 try:
     from napari.utils import progress as tqdm
 except ImportError:
@@ -14,7 +18,7 @@ except ImportError:
 
 
 def load_tiff_frames(im_dir):
-    all_tiffs = list(sorted(glob.glob(f"{im_dir}*.tif")))
+    all_tiffs = list(sorted(glob.glob(os.path.join(im_dir, "*.tif"))))
     n_frames = len(all_tiffs)
     if not n_frames:
         raise FileNotFoundError(f"Couldn't find any .tif files in {im_dir}")
@@ -25,6 +29,16 @@ def load_tiff_frames(im_dir):
 
     im = np.stack(stack)
     return im
+
+
+def get_ctc_output(original_seg, tracked_nx, frame_key, value_key, location_keys):
+    # remove merges from tracked_nx - keep closest node
+    mergeless = remove_merges(tracked_nx, location_keys)
+    max_id = assign_track_id(mergeless)
+    node_df = pd.DataFrame.from_dict(mergeless.nodes, orient="index")
+    relabelled_seg = mask_by_id(node_df, original_seg, frame_key, value_key)
+    track_df = get_ctc_tracks(mergeless)
+    return relabelled_seg, track_df
 
 
 def get_im_centers(im_pth):

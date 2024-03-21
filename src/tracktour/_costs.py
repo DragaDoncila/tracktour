@@ -57,6 +57,12 @@ def closest_neighbour_child_cost(detections, location_keys, edge_df):
                 for v in edge_group["v"].values
             ]
         )
+        # if there's only one child, node cannot divide so cost is infinite
+        # TODO: just don't have these edges at all
+        if len(child_coord_array) == 1:
+            min_dists[det_row.Index] = math.inf
+            continue
+
         dists_to_child = np.linalg.norm(src_coords - child_coord_array, axis=1)
         inter_child_dists = pdist(child_coord_array)
         div_costs = inter_child_dists + np.asarray(

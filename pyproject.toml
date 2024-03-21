@@ -24,6 +24,7 @@ dependencies = [
     "scikit-image",
     "scipy",
     "tifffile", # maybe should be optional?
+    "typer",
     "tqdm",
 ]
 classifiers = [
@@ -66,3 +67,6 @@ repository = "https://github.com/DragaDoncila/tracktour"
 
 [project.entry-points."napari.manifest"]
 napari-tracktour = "tracktour:napari.yaml"
+
+[project.scripts]
+tracktour = "tracktour.cli:main"
