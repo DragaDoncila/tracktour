@@ -8,8 +8,9 @@ from tracktour import Tracker, get_ctc_output, get_im_centers
 
 def _save_results(masks, tracks, out_dir):
     os.makedirs(out_dir, exist_ok=True)
+    n_digits = len(str(len(masks)))
     for i, frame in enumerate(masks):
-        frame_out_name = os.path.join(out_dir, f"mask{str(i).zfill(3)}.tif")
+        frame_out_name = os.path.join(out_dir, f"mask{str(i).zfill(n_digits)}.tif")
         imwrite(frame_out_name, frame)
 
     tracks.to_csv(

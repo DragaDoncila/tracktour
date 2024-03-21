@@ -1,4 +1,5 @@
 import glob
+import os
 
 import numpy as np
 import pandas as pd
@@ -17,7 +18,7 @@ except ImportError:
 
 
 def load_tiff_frames(im_dir):
-    all_tiffs = list(sorted(glob.glob(f"{im_dir}*.tif")))
+    all_tiffs = list(sorted(glob.glob(os.path.join(im_dir, "*.tif"))))
     n_frames = len(all_tiffs)
     if not n_frames:
         raise FileNotFoundError(f"Couldn't find any .tif files in {im_dir}")
