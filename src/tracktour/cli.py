@@ -1,7 +1,8 @@
-import argparse
 import os
 
+import typer
 from tifffile import imwrite
+from typing_extensions import Annotated
 
 from tracktour import Tracker, get_ctc_output, get_im_centers
 
@@ -18,7 +19,38 @@ def _save_results(masks, tracks, out_dir):
     )
 
 
-def _run_tracktour(seg_directory, out_directory, k_neighbours=10):
+app = typer.Typer(
+    help="Run tracktour on a segmentation and save results in CTC format."
+)
+
+
+@app.command()
+def ctc(
+    seg_directory: Annotated[
+        str,
+        typer.Argument(
+            help="Input directory containing tiff segmentation for each frame."
+        ),
+    ],
+    out_directory: Annotated[
+        str,
+        typer.Argument(
+            help="Output directory to save tracked segmentation and track info."
+        ),
+    ],
+    k_neighbours: Annotated[
+        int,
+        typer.Option(
+            "--k-neighbours",
+            "-k",
+            help="Number of neighbours to consider for assignment in next frame, by default 10.",
+        ),
+    ] = 10,
+):
+    """Run tracktour on Cell Tracking Challenge formatted data.
+
+    Saves data in Cell Tracking Challenge format.
+    """
     ims, detections, _, _, _ = get_im_centers(seg_directory)
     frame_shape = ims.shape[1:]
     location_keys = ("y", "x")
@@ -41,33 +73,11 @@ def _run_tracktour(seg_directory, out_directory, k_neighbours=10):
     _save_results(relabelled_seg, track_df, out_directory)
 
 
-parser = argparse.ArgumentParser(
-    description="Run tracktour on a segmentation and save results in CTC format."
-)
-parser.add_argument(
-    "seg_directory",
-    type=str,
-    help="Input directory containing tiff segmentation for each frame.",
-)
-parser.add_argument(
-    "out_directory",
-    type=str,
-    help="Output directory to save tracked segmentation and track info.",
-)
-parser.add_argument(
-    "-k",
-    "--k-neighbours",
-    dest="k_neighbours",
-    default=10,
-    type=int,
-    help="Number of neighbours to consider for assignment in next frame, by default 10.",
-)
+# needed because we have just one command for now
+@app.callback()
+def callback():
+    pass
 
 
 def main():
-    args = parser.parse_args()
-    _run_tracktour(args.seg_directory, args.out_directory, args.k_neighbours)
-
-
-if __name__ == "__main__":
-    main()
+    app()

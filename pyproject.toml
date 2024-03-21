@@ -24,6 +24,7 @@ dependencies = [
     "scikit-image",
     "scipy",
     "tifffile", # maybe should be optional?
+    "typer",
     "tqdm",
 ]
 classifiers = [
