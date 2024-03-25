@@ -29,7 +29,7 @@ dependencies = [
 ]
 classifiers = [
   "Intended Audience :: Science/Research",
-  "Framework :: napari",
+  # "Framework :: napari",
   "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
