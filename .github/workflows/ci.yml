@@ -52,12 +52,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          python -m pip install --upgrade build
           python -m pip install .
 
       - name: Build
         run: |
           git tag
-          python -m build
+          python -m build .
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
