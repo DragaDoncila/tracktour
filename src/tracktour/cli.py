@@ -9,10 +9,10 @@ from tracktour import Tracker, get_ctc_output, get_im_centers
 
 def _save_results(masks, tracks, out_dir):
     os.makedirs(out_dir, exist_ok=True)
-    n_digits = len(str(len(masks)))
+    n_digits = max(len(str(len(masks))), 3)
     for i, frame in enumerate(masks):
         frame_out_name = os.path.join(out_dir, f"mask{str(i).zfill(n_digits)}.tif")
-        imwrite(frame_out_name, frame)
+        imwrite(frame_out_name, frame, compression="zlib")
 
     tracks.to_csv(
         os.path.join(out_dir, "res_track.txt"), sep=" ", index=False, header=False
