@@ -2,7 +2,6 @@ import pandas as pd
 
 from tracktour import Tracker
 
-model_pth = "./_misc"
 coords = [
     (0, 50.0, 50.0),
     (0, 40, 50),
@@ -16,7 +15,6 @@ coords = [
 ]
 coords = pd.DataFrame(coords, columns=["t", "y", "x"])
 
-pixel_vals = [1, 2, 3, 1, 2, 3, 1, 2, 3]
 tracker = Tracker(im_shape=(100, 100), k_neighbours=2)
 tracked = tracker.solve(coords)
 print(tracked.tracked_detections)
