@@ -12,10 +12,12 @@ coords = [
     (2, 52, 53),
     (2, 37, 53),
     (2, 28, 64),
+    (2, 29, 65),
 ]
 coords = pd.DataFrame(coords, columns=["t", "y", "x"])
 
 tracker = Tracker(im_shape=(100, 100), k_neighbours=2)
+Tracker.DEBUG_MODE = True
 tracked = tracker.solve(coords)
 print(tracked.tracked_detections)
 print(tracked.tracked_edges)
