@@ -111,6 +111,7 @@ class Tracker:
     }
     VIRTUAL_LABEL_TO_INDEX = {v: k for k, v in VIRTUAL_INDEX_TO_LABEL.items()}
     DEBUG_MODE = False
+    USE_DIV_CONSTRAINT = True
 
     @staticmethod
     def index_to_label(index):
@@ -397,25 +398,48 @@ class Tracker:
 
         for vertex_id in detections.index:
             lbl = Tracker.index_to_label(vertex_id)
-            outgoing = flow.select("*", lbl, "*")
-            incoming = flow.select("*", "*", lbl)
-            # node-wise flow conservation
-            m.addConstr(sum(incoming) == sum(outgoing), f"conserv_{lbl}")
-            # minimal flow into each node
-            m.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{lbl}")
+            self._add_constraints_for_vertex(lbl, m, flow)
 
-            # TODO: div optional?
-            div_incoming = flow.select(
-                "*", Tracker.index_to_label(VirtualVertices.DIV.value), lbl
-            )
-            if len(div_incoming):
-                # division only occurs after appearance or migration
-                m.addConstr(
-                    sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{lbl}"
-                )
         m.update()
         build_time = time.time() - start
         return m, all_edges, full_det, build_time
+
+    def _add_constraints_for_vertex(self, v, model, flow_vars):
+        outgoing = flow_vars.select("*", v, "*")
+        incoming = flow_vars.select("*", "*", v)
+        div_incoming = flow_vars.select(
+            "*", Tracker.index_to_label(VirtualVertices.DIV.value), v
+        )
+        if self.USE_DIV_CONSTRAINT:
+            self._add_constraints_with_div(v, outgoing, incoming, div_incoming, model)
+        else:
+            self._add_constraints_without_div(
+                v, outgoing, incoming, div_incoming, model
+            )
+
+    def _add_constraints_with_div(self, v, outgoing, incoming, div_incoming, model):
+        # node-wise flow conservation
+        model.addConstr(sum(incoming) == sum(outgoing), f"conserv_{v}")
+        # minimal flow into each node
+        model.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{v}")
+
+        # TODO: div optional?
+        if len(div_incoming):
+            # division only occurs after appearance or migration
+            model.addConstr(
+                sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{v}"
+            )
+
+    def _add_constraints_without_div(self, v, outgoing, incoming, div_incoming, model):
+        # node-wise flow conservation
+        model.addConstr(sum(incoming) == sum(outgoing), f"conserv_{v}")
+        # exclude incoming flow from division
+        # TODO: div optional?
+        if len(div_incoming):
+            div_incoming = div_incoming[0]
+            incoming = [var for var in incoming if not var.sameAs(div_incoming)]
+        # minimal flow into each node
+        model.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{v}")
 
     def _get_all_vertices(self, detections, frame_key, location_keys):
         """Adds virtual vertices to copy of detections and returns.
