@@ -77,10 +77,15 @@ def get_im_info(centers, labels, im_arr):
 def get_medoid(prop):
     region = prop.image
     region_skeleton = skeletonize(region).astype(bool)
-    g, nodes = pixel_graph(region_skeleton, connectivity=2)
-    medoid_offset, _ = central_pixel(
-        g, nodes=nodes, shape=region_skeleton.shape, partition_size=100
-    )
+    if np.sum(region_skeleton) == 1:
+        medoid_offset = np.unravel_index(
+            np.argmax(region_skeleton), region_skeleton.shape
+        )
+    else:
+        g, nodes = pixel_graph(region_skeleton, connectivity=2)
+        medoid_offset, _ = central_pixel(
+            g, nodes=nodes, shape=region_skeleton.shape, partition_size=100
+        )
     medoid_offset = np.asarray(medoid_offset)
     top_left = np.asarray(prop.bbox[: region.ndim])
     medoid = tuple(top_left + medoid_offset)
