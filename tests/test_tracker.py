@@ -277,7 +277,7 @@ def test_to_gurobi_model(human_detections):
 def test_solve_public(human_detections):
     detections, im_shape = human_detections
     tracker = Tracker(im_shape=im_shape, k_neighbours=2)
-    tracked = tracker.solve(detections, "t", ("y", "x"))
+    tracked = tracker.solve(detections, frame_key="t", location_keys=("y", "x"))
     solution_edges = np.asarray(
         [[0, 3], [1, 5], [2, 6], [3, 7], [4, 8], [5, 9], [6, 10]], dtype=int
     )
@@ -295,7 +295,7 @@ def test_solve_debug(human_detections):
     detections, im_shape = human_detections
     tracker = Tracker(im_shape=im_shape, k_neighbours=2)
     tracker.DEBUG_MODE = True
-    tracker.solve(detections, "t", ("y", "x"))
+    tracker.solve(detections, frame_key="t", location_keys=("y", "x"))
 
 
 def test_big_instance_unchanged():
