@@ -18,6 +18,7 @@ coords = pd.DataFrame(coords, columns=["t", "y", "x"])
 
 tracker = Tracker(im_shape=(100, 100), k_neighbours=2)
 Tracker.DEBUG_MODE = True
-tracked = tracker.solve(coords)
+# y coordinate is a tenth the magnitude of x coordinate
+tracked = tracker.solve(coords, scale=(0.1, 1))
 print(tracked.tracked_detections)
 print(tracked.tracked_edges)
