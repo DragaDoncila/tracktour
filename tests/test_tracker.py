@@ -54,6 +54,33 @@ def test_build_trees(get_detections):
     np.testing.assert_allclose(detections[detections.t == 0][["y", "x"]], one_dict.data)
 
 
+def test_scale_computed(get_detections):
+    detections = get_detections()
+    tracker = Tracker(im_shape=(20, 40))
+    tracked = tracker.solve(detections, frame_key="t", location_keys=("y", "x"))
+    assert tracker.scale == (1, 1)
+    np.testing.assert_equal(
+        tracked.tracked_detections["y"].values,
+        tracked.tracked_detections["y_scaled"].values,
+    )
+    np.testing.assert_equal(
+        tracked.tracked_detections["x"].values,
+        tracked.tracked_detections["x_scaled"].values,
+    )
+    tracked_scaled = tracker.solve(
+        detections, scale=(2, 2), frame_key="t", location_keys=("y", "x")
+    )
+    assert tracker.scale == (2, 2)
+    np.testing.assert_equal(
+        tracked_scaled.tracked_detections["y_scaled"].values,
+        tracked_scaled.tracked_detections["y"].values * 2,
+    )
+    np.testing.assert_equal(
+        tracked_scaled.tracked_detections["x_scaled"].values,
+        tracked_scaled.tracked_detections["x"].values * 2,
+    )
+
+
 def test_scaled_detections_used_in_solve():
     # detections only move in x coordinate
     detection_dict = {

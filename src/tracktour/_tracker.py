@@ -487,6 +487,8 @@ class Tracker:
         return full_det
 
     def _compute_detection_costs(self, detections, location_keys, edge_df):
+        # TODO: should verify there's no negatives here
+        # if there are, we should raise that im_shape was probs wrong
         enter_exit_cost = dist_to_edge_cost_func(
             self.im_shape, detections, location_keys
         )
