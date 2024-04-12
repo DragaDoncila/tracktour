@@ -170,11 +170,16 @@ class Tracker:
         self.frame_key = frame_key
         self.value_key = value_key
 
+        # scale detections (keeping original columns)
         self._scaled_location_keys = [f"{key}_scaled" for key in location_keys]
         for i in range(len(self.location_keys)):
             detections[self._scaled_location_keys[i]] = (
                 detections[self.location_keys[i]] * self.scale[i]
             )
+        # scale frame shape
+        self.im_shape = tuple(
+            self.im_shape[i] * scale[i] for i in range(len(self.im_shape))
+        )
 
         # TODO: copy/validate detections
         start = time.time()

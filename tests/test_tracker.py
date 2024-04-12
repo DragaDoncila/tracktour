@@ -71,6 +71,7 @@ def test_scale_computed(get_detections):
         detections, scale=(2, 2), frame_key="t", location_keys=("y", "x")
     )
     assert tracker.scale == (2, 2)
+    assert tracker.im_shape == (40, 80)
     np.testing.assert_equal(
         tracked_scaled.tracked_detections["y_scaled"].values,
         tracked_scaled.tracked_detections["y"].values * 2,
@@ -100,7 +101,8 @@ def test_scaled_detections_used_in_solve():
     tracked = tracker.solve(
         detections, scale=(0.01, 1), frame_key="t", location_keys=("y", "x")
     )
-
+    # scale correctly changed the image shape
+    assert tracker.im_shape == (0.1, 50)
     # no migration edges will be used
     assert tracked.tracked_edges.empty
     # appearance/exit edges will be used
