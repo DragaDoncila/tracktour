@@ -136,6 +136,7 @@ class Tracker:
     def solve(
         self,
         detections: pd.DataFrame,
+        scale: Tuple[float] = (1, 1),
         frame_key: str = "t",
         location_keys: Tuple[str] = ("y", "x"),
         # TODO: we should be able to make this optional
@@ -150,28 +151,42 @@ class Tracker:
         detections : pd.DataFrame
             dataframe where each row is a detection, with coordinates at location_keys and time at frame_key. Index must be sequential integers from 0. Detections
             must be sorted by frame.
+        scale: Tuple[float]
+            pixel scale in each dimension e.g. (0.4, 0.4) or (1, 0.3, 0.3)
         frame_key : str, optional
-            _description_, by default "t"
+            dataframe column denoting the image frame, by default "t"
         location_keys : Tuple[str], optional
-            _description_, by default ("y", "x")
+            dataframe columns denoting the pixel coordinates, by default ("y", "x")
         value_key : Optional[str], optional
-            _description_, by default None
+            dataframe column denoting the value of the pixel at the given coordinates, by default None
 
         Returns
         -------
         _type_
             _description_d
         """
+        self.scale = scale
         self.location_keys = location_keys
         self.frame_key = frame_key
         self.value_key = value_key
+
+        # scale detections (keeping original columns)
+        self._scaled_location_keys = [f"{key}_scaled" for key in location_keys]
+        for i in range(len(self.location_keys)):
+            detections[self._scaled_location_keys[i]] = (
+                detections[self.location_keys[i]] * self.scale[i]
+            )
+        # scale frame shape
+        self.im_shape = tuple(
+            self.im_shape[i] * scale[i] for i in range(len(self.im_shape))
+        )
 
         # TODO: copy/validate detections
         start = time.time()
 
         # build kd-trees
         # TODO: stop passing stuff around now that you store it as an attribute
-        kd_dict = self._build_trees(detections, frame_key, location_keys)
+        kd_dict = self._build_trees(detections, frame_key, self._scaled_location_keys)
 
         # get candidate edges
         edge_df = self._get_candidate_edges(detections, frame_key, kd_dict)
@@ -181,14 +196,14 @@ class Tracker:
 
         # compute costs for division and appearance/exit - on vertices
         enter_exit_cost, div_cost = self._compute_detection_costs(
-            detections, location_keys, edge_df
+            detections, self._scaled_location_keys, edge_df
         )
         detections["enter_exit_cost"] = enter_exit_cost
         detections["div_cost"] = div_cost
 
         # build model
         model, all_edges, all_vertices, gb_time = self._to_gurobi_model(
-            detections, edge_df, frame_key, location_keys
+            detections, edge_df, frame_key, self._scaled_location_keys
         )
 
         build_duration = time.time() - start
@@ -477,6 +492,8 @@ class Tracker:
         return full_det
 
     def _compute_detection_costs(self, detections, location_keys, edge_df):
+        # TODO: should verify there's no negatives here
+        # if there are, we should raise that im_shape was probs wrong
         enter_exit_cost = dist_to_edge_cost_func(
             self.im_shape, detections, location_keys
         )
