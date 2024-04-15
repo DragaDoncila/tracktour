@@ -125,22 +125,52 @@ class Tracker:
             return Tracker.VIRTUAL_LABEL_TO_INDEX[label]
         return label
 
-    def __init__(self, im_shape: Tuple[int, int], k_neighbours: int = 10) -> None:
-        self.im_shape = im_shape
-        self.k_neighbours = k_neighbours
+    def __init__(
+        self,
+        im_shape: Tuple[int, int],
+        scale: Tuple[float] = (1, 1),
+    ) -> None:
+        self._im_shape = im_shape
+        # will scale im_shape
+        self.scale = scale
 
+        self.k_neighbours = 10
         self.location_keys = None
         self.frame_key = None
         self.value_key = None
 
+    @property
+    def scale(self):
+        return self._scale
+
+    @scale.setter
+    def scale(self, scale):
+        self._scale = scale
+        self._im_shape = tuple(
+            self._im_shape[i] * self._scale[i] for i in range(len(self._im_shape))
+        )
+
+    @property
+    def im_shape(self):
+        return self._im_shape
+
+    @im_shape.setter
+    def im_shape(self, im_shape):
+        self._im_shape = im_shape
+        if self._scale != (1, 1):
+            warnings.warn(
+                "Setting im_shape will reset scale to (1, 1). Please set scale again if needed."
+            )
+            self._scale = (1, 1)
+
     def solve(
         self,
         detections: pd.DataFrame,
-        scale: Tuple[float] = (1, 1),
         frame_key: str = "t",
         location_keys: Tuple[str] = ("y", "x"),
         # TODO: we should be able to make this optional
         value_key: Optional[str] = "label",
+        k_neighbours: int = 10,
         # TODO: ?
         # migration_only: bool = False,
     ):
@@ -151,24 +181,24 @@ class Tracker:
         detections : pd.DataFrame
             dataframe where each row is a detection, with coordinates at location_keys and time at frame_key. Index must be sequential integers from 0. Detections
             must be sorted by frame.
-        scale: Tuple[float]
-            pixel scale in each dimension e.g. (0.4, 0.4) or (1, 0.3, 0.3)
         frame_key : str, optional
             dataframe column denoting the image frame, by default "t"
         location_keys : Tuple[str], optional
             dataframe columns denoting the pixel coordinates, by default ("y", "x")
         value_key : Optional[str], optional
             dataframe column denoting the value of the pixel at the given coordinates, by default None
+        k_neighbours : int, optional
+            number of nearest neighbours to consider for migration, by default 10
 
         Returns
         -------
-        _type_
-            _description_d
+        Tracked
+            tracked object with tracked_detections and tracked_edges dataframes
         """
-        self.scale = scale
         self.location_keys = location_keys
         self.frame_key = frame_key
         self.value_key = value_key
+        self.k_neighbours = k_neighbours
 
         # scale detections (keeping original columns)
         self._scaled_location_keys = [f"{key}_scaled" for key in location_keys]
@@ -176,10 +206,6 @@ class Tracker:
             detections[self._scaled_location_keys[i]] = (
                 detections[self.location_keys[i]] * self.scale[i]
             )
-        # scale frame shape
-        self.im_shape = tuple(
-            self.im_shape[i] * scale[i] for i in range(len(self.im_shape))
-        )
 
         # TODO: copy/validate detections
         start = time.time()
@@ -495,7 +521,7 @@ class Tracker:
         # TODO: should verify there's no negatives here
         # if there are, we should raise that im_shape was probs wrong
         enter_exit_cost = dist_to_edge_cost_func(
-            self.im_shape, detections, location_keys
+            self._im_shape, detections, location_keys
         )
         div_cost = closest_neighbour_child_cost(detections, location_keys, edge_df)
         return enter_exit_cost, div_cost
