@@ -103,6 +103,13 @@ class Tracker:
     APPEARANCE_EDGE_CAPACITY = 1
     DIVISION_EDGE_CAPACITY = 1
     MINIMAL_VERTEX_DEMAND = 1
+    FLOW_PENALTY_COEFFICIENT = 2
+
+    USE_DIV_CONSTRAINT = True
+    PENALIZE_FLOW = False
+
+    DEBUG_MODE = False
+
     VIRTUAL_INDEX_TO_LABEL = {
         VirtualVertices.SOURCE.value: "s",
         VirtualVertices.APP.value: "a",
@@ -110,8 +117,6 @@ class Tracker:
         VirtualVertices.TARGET.value: "t",
     }
     VIRTUAL_LABEL_TO_INDEX = {v: k for k, v in VIRTUAL_INDEX_TO_LABEL.items()}
-    DEBUG_MODE = False
-    USE_DIV_CONSTRAINT = True
 
     @staticmethod
     def index_to_label(index):
@@ -402,7 +407,7 @@ class Tracker:
         full_det = self._get_all_vertices(detections, frame_key, location_keys)
         all_edges = self._get_all_edges(edge_df, detections, frame_key)
 
-        model_var_info = {
+        flow_var_info = {
             (
                 e.Index,
                 Tracker.index_to_label(e.u),
@@ -411,7 +416,7 @@ class Tracker:
             for e in all_edges.itertuples()
         }
         edge_capacities = all_edges.capacity.values
-        var_names = gp.tuplelist(list(model_var_info.keys()))
+        flow_var_names = gp.tuplelist(list(flow_var_info.keys()))
 
         src_label = Tracker.index_to_label(VirtualVertices.SOURCE.value)
         app_label = Tracker.index_to_label(VirtualVertices.APP.value)
@@ -420,8 +425,22 @@ class Tracker:
 
         m = gp.Model("tracks")
         flow = m.addVars(
-            var_names, obj=model_var_info, lb=0, ub=edge_capacities, name="flow"
+            flow_var_names, obj=flow_var_info, lb=0, ub=edge_capacities, name="flow"
         )
+        if self.PENALIZE_FLOW:
+            penalty_var_info = {
+                (
+                    e.Index,
+                    Tracker.index_to_label(e.u),
+                    Tracker.index_to_label(e.v),
+                ): Tracker.FLOW_PENALTY_COEFFICIENT
+                * e.cost
+                for e in edge_df.itertuples()
+            }
+            penalty_var_names = gp.tuplelist(list(penalty_var_info.keys()))
+            penalty_flow = m.addVars(
+                penalty_var_names, obj=penalty_var_info, lb=0, name="penalty"
+            )
         # flow = (edge_id, source_label, target_label)
         src_out_edges = flow.select("*", src_label, "*")
         target_in_edges = flow.select("*", "*", target_label)
@@ -440,6 +459,13 @@ class Tracker:
         for vertex_id in detections.index:
             lbl = Tracker.index_to_label(vertex_id)
             self._add_constraints_for_vertex(lbl, m, flow)
+
+        if self.PENALIZE_FLOW:
+            # for each penalty var, find its flow var and constrain them
+            for var in penalty_flow:
+                penalty_var = penalty_flow[var]
+                flow_var = flow.select(var)[0]
+                m.addConstr(penalty_var <= flow_var - 1, f"penalty_{var[1]}-{var[2]}")
 
         m.update()
         build_time = time.time() - start

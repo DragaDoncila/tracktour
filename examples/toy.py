@@ -18,6 +18,7 @@ coords = pd.DataFrame(coords, columns=["t", "y", "x"])
 
 tracker = Tracker(im_shape=(100, 100))
 Tracker.DEBUG_MODE = True
+# tracker.PENALIZE_FLOW = True
 # y coordinate is a tenth the magnitude of x coordinate
 tracked = tracker.solve(coords, k_neighbours=2)
 print(tracked.tracked_detections)
