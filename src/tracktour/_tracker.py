@@ -103,7 +103,7 @@ class Tracker:
     APPEARANCE_EDGE_CAPACITY = 1
     DIVISION_EDGE_CAPACITY = 1
     MINIMAL_VERTEX_DEMAND = 1
-    FLOW_PENALTY_COEFFICIENT = 2
+    FLOW_PENALTY_COEFFICIENT = 50
 
     USE_DIV_CONSTRAINT = True
     PENALIZE_FLOW = False
@@ -433,7 +433,7 @@ class Tracker:
                     e.Index,
                     Tracker.index_to_label(e.u),
                     Tracker.index_to_label(e.v),
-                ): Tracker.FLOW_PENALTY_COEFFICIENT
+                ): self.FLOW_PENALTY_COEFFICIENT
                 * e.cost
                 for e in edge_df.itertuples()
             }
@@ -465,7 +465,7 @@ class Tracker:
             for var in penalty_flow:
                 penalty_var = penalty_flow[var]
                 flow_var = flow.select(var)[0]
-                m.addConstr(penalty_var <= flow_var - 1, f"penalty_{var[1]}-{var[2]}")
+                m.addConstr(penalty_var >= flow_var - 1, f"penalty_{var[1]}-{var[2]}")
 
         m.update()
         build_time = time.time() - start
@@ -642,6 +642,7 @@ class Tracker:
                 ]
             ): v.X
             for v in model.getVars()
+            if "flow" in v.VarName
         }
         edge_index, flow = zip(*[(k[0], v) for k, v in sol_dict.items()])
         all_edges.loc[list(edge_index), "flow"] = list(flow)
