@@ -5,10 +5,18 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/tracktour.svg?color=green)](https://python.org)
 [![CI](https://github.com/DragaDoncila/tracktour/actions/workflows/ci.yml/badge.svg)](https://github.com/DragaDoncila/tracktour/actions/workflows/ci.yml)
 
-tracktour is a simple object tracker based on a network flow linear model. tracktour takes a dataframe of detected objects and solves a linear program
+`tracktour` is a simple object tracker based on a network flow linear model. `tracktour` takes a dataframe of detected objects and solves a linear program
 (currently using Gurobi, but we will soon add an open source solver interface) to produce tracking results.
 
-tracktour is rapidly changing and its API will change without deprecation warnings.
+`tracktour` is rapidly changing and its API will change without deprecation warnings.
+
+## About `tracktour`
+
+`tracktour` is a purely discrete-optimization-based tracker. It takes the coordinates of detected objects as input, and associates
+these objects over time to create complete trajectories, including divisions. Tracktour's only parameter is `k` - the number of
+neighbours to consider for possible assignment in the next frame. Using this parameter and very simple distance based cost,
+a candidate graph is created, and passed to Gurobi for solving. Once solved, the detected objects and edges that make up the tracks are
+returned to the user for inspection.
 
 ## Installation
 
