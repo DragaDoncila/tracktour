@@ -1,3 +1,5 @@
+"""NOTE: This code is experimental and only runs with specific branches of various packages."""
+
 import napari
 
 from tracktour import load_tiff_frames

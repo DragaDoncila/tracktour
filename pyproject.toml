@@ -21,6 +21,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pydantic",
+    "pyyaml",
     "scikit-image",
     "scipy",
     "tifffile", # maybe should be optional?
