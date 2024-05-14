@@ -65,7 +65,7 @@ You may want to convert the solution into a networkx graph for easier manipulati
 solution_graph = tracked.as_nx_digraph()
 ```
 
-See the [toy example](./examples/toy.py) for a complete script.
+See the [toy example](./examples/toy.py) for a complete script, and the [CTC example](./examples/build_and_solve_ctc.ipynb) for visualization in `napari`.
 
 ### Extracting Detections
 
