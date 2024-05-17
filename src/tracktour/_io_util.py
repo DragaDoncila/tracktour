@@ -1,5 +1,7 @@
 import glob
+import logging
 import os
+import sys
 
 import numpy as np
 import pandas as pd
@@ -15,6 +17,11 @@ try:
     from napari.utils import progress as tqdm
 except ImportError:
     from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.DEBUG)
+logger.addHandler(handler)
 
 
 def load_tiff_frames(im_dir):
@@ -77,11 +84,17 @@ def get_im_info(centers, labels, im_arr):
 def get_medoid(prop):
     region = prop.image
     region_skeleton = skeletonize(region).astype(bool)
-    if np.sum(region_skeleton) == 1:
+    skeleton_sum = np.sum(region_skeleton)
+    if skeleton_sum == 1:
+        logger.info(
+            f"Region skeleton for {prop.label} is a single pixel, using it as medoid."
+        )
         medoid_offset = np.unravel_index(
             np.argmax(region_skeleton), region_skeleton.shape
         )
     else:
+        if skeleton_sum == 0:
+            logger.warning(f"Region skeleton for {prop.label} is empty.")
         g, nodes = pixel_graph(region_skeleton, connectivity=2)
         medoid_offset, _ = central_pixel(
             g, nodes=nodes, shape=region_skeleton.shape, partition_size=100
@@ -111,6 +124,7 @@ def get_centers(segmentation):
             )
             for prop in props:
                 if prop.label in unfound_labels:
+                    logger.info(f"Medoiding label {prop.label} on frame {i}.")
                     label_center_mapping[prop.label] = (i, *get_medoid(prop))
             # 0 is not a valid label and would only exist in the dictionary
             # if some labels required the medoid treatment.
