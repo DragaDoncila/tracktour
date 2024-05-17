@@ -69,20 +69,20 @@ def ctc(
 
     Saves data in Cell Tracking Challenge format.
     """
-    logging_level = logging.NOTSET
     handlers = []
-    if log_info:
-        logging_level = logging.INFO
-        handlers.append(logging.StreamHandler(stream=sys.stdout))
-    if log_file is not None:
-        logging_level = logging.INFO
-        handlers.append(logging.FileHandler(filename=log_file))
+    fmt = logging.Formatter(
+        "[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s"
+    )
     if log_info or log_file is not None:
-        logging.basicConfig(
-            level=logging_level,
-            format="[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s",
-            handlers=handlers,
-        )
+        logger = logging.getLogger("tracktour")
+        logger.setLevel(logging.INFO)
+        if log_info:
+            handlers.append(logging.StreamHandler(stream=sys.stdout))
+        if log_file is not None:
+            handlers.append(logging.FileHandler(filename=log_file))
+        for hdlr in handlers:
+            hdlr.setFormatter(fmt)
+            logger.addHandler(hdlr)
 
     ims, detections, _, _, _ = get_im_centers(seg_directory)
     frame_shape = ims.shape[1:]

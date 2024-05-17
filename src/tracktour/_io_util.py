@@ -18,6 +18,8 @@ try:
 except ImportError:
     from tqdm import tqdm
 
+logger = logging.getLogger("tracktour")
+
 
 def load_tiff_frames(im_dir):
     all_tiffs = list(sorted(glob.glob(os.path.join(im_dir, "*.tif"))))
@@ -81,7 +83,7 @@ def get_medoid(prop):
     region_skeleton = skeletonize(region).astype(bool)
     skeleton_sum = np.sum(region_skeleton)
     if skeleton_sum == 1:
-        logging.info(
+        logger.info(
             f"Region skeleton for {prop.label} is a single pixel, using it as medoid."
         )
         medoid_offset = np.unravel_index(
@@ -89,7 +91,7 @@ def get_medoid(prop):
         )
     else:
         if skeleton_sum == 0:
-            logging.warning(f"Region skeleton for {prop.label} is empty.")
+            logger.warning(f"Region skeleton for {prop.label} is empty.")
         g, nodes = pixel_graph(region_skeleton, connectivity=2)
         medoid_offset, _ = central_pixel(
             g, nodes=nodes, shape=region_skeleton.shape, partition_size=100
@@ -119,7 +121,7 @@ def get_centers(segmentation):
             )
             for prop in props:
                 if prop.label in unfound_labels:
-                    logging.info(f"Medoiding label {prop.label} on frame {i}.")
+                    logger.info(f"Medoiding label {prop.label} on frame {i}.")
                     label_center_mapping[prop.label] = (i, *get_medoid(prop))
             # 0 is not a valid label and would only exist in the dictionary
             # if some labels required the medoid treatment.
