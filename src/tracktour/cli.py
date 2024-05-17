@@ -1,4 +1,6 @@
+import logging
 import os
+import sys
 
 import typer
 from tifffile import imwrite
@@ -46,11 +48,42 @@ def ctc(
             help="Number of neighbours to consider for assignment in next frame, by default 10.",
         ),
     ] = 10,
+    log_info: Annotated[
+        bool,
+        typer.Option(
+            "--log-info",
+            "-l",
+            help="Whether to display logging information in the terminal.",
+        ),
+    ] = False,
+    log_file: Annotated[
+        str,
+        typer.Option(
+            "--log-file",
+            "-lf",
+            help="Path to save log file, by default `tracktour.log`",
+        ),
+    ] = None,
 ):
     """Run tracktour on Cell Tracking Challenge formatted data.
 
     Saves data in Cell Tracking Challenge format.
     """
+    logging_level = logging.NOTSET
+    handlers = []
+    if log_info:
+        logging_level = logging.INFO
+        handlers.append(logging.StreamHandler(stream=sys.stdout))
+    if log_file is not None:
+        logging_level = logging.INFO
+        handlers.append(logging.FileHandler(filename=log_file))
+    if log_info or log_file is not None:
+        logging.basicConfig(
+            level=logging_level,
+            format="[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s",
+            handlers=handlers,
+        )
+
     ims, detections, _, _, _ = get_im_centers(seg_directory)
     frame_shape = ims.shape[1:]
     location_keys = ("y", "x")
