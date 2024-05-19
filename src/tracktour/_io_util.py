@@ -91,7 +91,10 @@ def get_medoid(prop):
         )
     else:
         if skeleton_sum == 0:
-            logger.warning(f"Region skeleton for {prop.label} is empty.")
+            logger.warning(
+                f"Region skeleton for {prop.label} is empty. Using whole region."
+            )
+            region_skeleton = region
         g, nodes = pixel_graph(region_skeleton, connectivity=2)
         medoid_offset, _ = central_pixel(
             g, nodes=nodes, shape=region_skeleton.shape, partition_size=100
