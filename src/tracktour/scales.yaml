@@ -1,0 +1,160 @@
+'BF-C2DL-HSC_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.645, 0.645]
+  time_unit: 'min'
+  time_scale: 5
+'BF-C2DL-HSC_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.645, 0.645]
+  time_unit: 'min'
+  time_scale: 5
+'BF-C2DL-MuSC_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.645, 0.645]
+  time_unit: 'min'
+  time_scale: 5
+'BF-C2DL-MuSC_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.645, 0.645]
+  time_unit: 'min'
+  time_scale: 5
+'DIC-C2DH-HeLa_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.19, 0.19]
+  time_unit: 'min'
+  time_scale: 10
+'DIC-C2DH-HeLa_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.19, 0.19]
+  time_unit: 'min'
+  time_scale: 10
+'Fluo-C2DL-MSC_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.3, 0.3]
+  time_unit: 'min'
+  time_scale: 20
+'Fluo-C2DL-MSC_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.3977, 0.3977]
+  time_unit: 'min'
+  time_scale: 30
+'Fluo-N2DH-GOWT1_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.24, 0.24]
+  time_unit: 'min'
+  time_scale: 5
+'Fluo-N2DH-GOWT1_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.24, 0.24]
+  time_unit: 'min'
+  time_scale: 5
+'Fluo-N2DL-HeLa_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.645, 0.645]
+  time_unit: 'min'
+  time_scale: 30
+'Fluo-N2DL-HeLa_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.645, 0.645]
+  time_unit: 'min'
+  time_scale: 30
+'PhC-C2DH-U373_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.65, 0.65]
+  time_unit: 'min'
+  time_scale: 15
+'PhC-C2DH-U373_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.65, 0.65]
+  time_unit: 'min'
+  time_scale: 15
+'PhC-C2DL-PSC_01':
+  pixel_unit: 'microns'
+  pixel_scale: [1.6, 1.6]
+  time_unit: 'min'
+  time_scale: 10
+'PhC-C2DL-PSC_02':
+  pixel_unit: 'microns'
+  pixel_scale: [1.6, 1.6]
+  time_unit: 'min'
+  time_scale: 10
+'Fluo-C3DH-A549_01':
+  pixel_unit: 'microns'
+  pixel_scale: [1.0, 0.126, 0.126]
+  time_unit: 'min'
+  time_scale: 2
+'Fluo-C3DH-A549_02':
+  pixel_unit: 'microns'
+  pixel_scale: [1.0, 0.126, 0.126]
+  time_unit: 'min'
+  time_scale: 2
+'Fluo-C3DH-H157_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.5, 0.126, 0.126]
+  time_unit: 'min'
+  time_scale: 2
+'Fluo-C3DH-H157_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.5, 0.126, 0.126]
+  time_unit: 'min'
+  time_scale: 1
+'Fluo-C3DL-MDA231_01':
+  pixel_unit: 'microns'
+  pixel_scale: [6, 1.242, 1.242]
+  time_unit: 'min'
+  time_scale: 80
+'Fluo-C3DL-MDA231_02':
+  pixel_unit: 'microns'
+  pixel_scale: [6, 1.242, 1.242]
+  time_unit: 'min'
+  time_scale: 80
+'Fluo-N3DH-CE_01':
+  pixel_unit: 'microns'
+  pixel_scale: [1, 0.09, 0.09]
+  time_unit: 'min'
+  time_scale: 1
+'Fluo-N3DH-CE_02':
+  pixel_unit: 'microns'
+  pixel_scale: [1, 0.09, 0.09]
+  time_unit: 'min'
+  time_scale: 1.5
+'Fluo-N3DH-CHO_01':
+  pixel_unit: 'microns'
+  pixel_scale: [1, 0.202, 0.202]
+  time_unit: 'min'
+  time_scale: 9.5
+'Fluo-N3DH-CHO_02':
+  pixel_unit: 'microns'
+  pixel_scale: [1, 0.202, 0.202]
+  time_unit: 'min'
+  time_scale: 9.5
+'Fluo-N3DH-SIM+_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.2, 0.125, 0.125]
+  time_unit: 'min'
+  time_scale: 29
+'Fluo-N3DH-SIM+_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.2, 0.125, 0.125]
+  time_unit: 'min'
+  time_scale: 29
+'Fluo-C3DH-A549-SIM_01':
+  pixel_unit: 'microns'
+  pixel_scale: [1, 0.126, 0.126]
+  time_unit: 'min'
+  time_scale: 20
+'Fluo-C3DH-A549-SIM_02':
+  pixel_unit: 'microns'
+  pixel_scale: [1, 0.126, 0.126]
+  time_unit: 'min'
+  time_scale: 20
+'Fluo-N2DH-SIM+_01':
+  pixel_unit: 'microns'
+  pixel_scale: [0.125, 0.125]
+  time_unit: 'min'
+  time_scale: 29
+'Fluo-N2DH-SIM+_02':
+  pixel_unit: 'microns'
+  pixel_scale: [0.125, 0.125]
+  time_unit: 'min'
+  time_scale: 29

@@ -2,9 +2,11 @@ import glob
 import logging
 import os
 import sys
+import warnings
 
 import numpy as np
 import pandas as pd
+import yaml
 from skimage.graph import central_pixel, pixel_graph
 from skimage.measure import regionprops
 from skimage.morphology import skeletonize
@@ -43,6 +45,35 @@ def get_ctc_output(original_seg, tracked_nx, frame_key, value_key, location_keys
     relabelled_seg = mask_by_id(node_df, original_seg, frame_key, value_key)
     track_df = get_ctc_tracks(mergeless)
     return relabelled_seg, track_df
+
+
+def get_ctc_ds_name(pth):
+    """Finds CTC dataset name '{name}_{seq#}' from path.
+
+    Looks for sequence number, then finds parent directory with
+    two hyphens in the name.
+    """
+    dirs = os.path.normpath(pth).split(os.path.sep)
+    seq_index = [index for index, comp in enumerate(dirs) if comp[:2].isdigit()]
+    ds_name_index = [index - 1 for index in seq_index]
+    ds_name = ""
+    for i, idx in enumerate(ds_name_index):
+        if idx >= 0 and len(dirs[idx].split("-")) == 3:
+            ds_name = dirs[idx] + "_" + dirs[seq_index[i]][:2]
+            break
+    return ds_name
+
+
+def read_scale(ds_name):
+    """Reads scale for CTC dataset. Warns if name is not found, and returns None."""
+    scale_path = os.path.join(os.path.dirname(__file__), "scales.yaml")
+    scales = {}
+    with open(scale_path, "r") as f:
+        scales = yaml.safe_load(f)
+    if ds_name not in scales:
+        warnings.warn(f"Scale for {ds_name} not found.")
+        return None
+    return scales[ds_name]["pixel_scale"]
 
 
 def get_im_centers(im_pth):

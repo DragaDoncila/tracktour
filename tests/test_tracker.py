@@ -54,6 +54,70 @@ def test_build_trees(get_detections):
     np.testing.assert_allclose(detections[detections.t == 0][["y", "x"]], one_dict.data)
 
 
+def test_scale_computed(get_detections):
+    detections = get_detections()
+    tracker = Tracker(im_shape=(20, 40))
+    tracked = tracker.solve(detections, frame_key="t", location_keys=("y", "x"))
+    assert tracker._scale == (1, 1)
+    np.testing.assert_equal(
+        tracked.tracked_detections["y"].values,
+        tracked.tracked_detections["y_scaled"].values,
+    )
+    np.testing.assert_equal(
+        tracked.tracked_detections["x"].values,
+        tracked.tracked_detections["x_scaled"].values,
+    )
+    tracker.scale = (2, 2)
+    tracked_scaled = tracker.solve(detections, frame_key="t", location_keys=("y", "x"))
+    assert tracker._scale == (2, 2)
+    assert tracker._im_shape == (40, 80)
+    np.testing.assert_equal(
+        tracked_scaled.tracked_detections["y_scaled"].values,
+        tracked_scaled.tracked_detections["y"].values * 2,
+    )
+    np.testing.assert_equal(
+        tracked_scaled.tracked_detections["x_scaled"].values,
+        tracked_scaled.tracked_detections["x"].values * 2,
+    )
+    with pytest.warns(match="Setting im_shape will reset scale"):
+        tracker.im_shape = (10, 10)
+
+
+def test_scaled_detections_used_in_solve():
+    # detections only move in x coordinate
+    detection_dict = {
+        "t": [0, 0, 0, 1, 1, 1, 2, 2, 2],
+        "y": [1, 4, 9, 1, 4, 9, 1, 4, 9],
+        "x": [1, 4, 9, 2, 5, 7, 1, 4, 9],
+    }
+    detections = pd.DataFrame(detection_dict)
+    # make x coordinate bigger
+    detections["x"] *= 5
+    im_shape = (10, 50)
+
+    tracker = Tracker(im_shape=im_shape, scale=(0.01, 1))
+    # TODO: probs just make a fixture Tracker so that we always get debug mode
+    tracker.DEBUG_MODE = True
+    # scale will make y coordinates very small and make appearance/exit very cheap
+    tracked = tracker.solve(
+        detections, frame_key="t", location_keys=("y", "x"), k_neighbours=2
+    )
+    # scale correctly changed the image shape
+    assert tracker._im_shape == (0.1, 50)
+    # no migration edges will be used
+    assert tracked.tracked_edges.empty
+    # appearance/exit edges will be used
+    used_edges = tracked.all_edges[
+        (tracked.all_edges.flow > 0)
+        & (tracked.all_edges.u != VirtualVertices.SOURCE.value)
+    ]
+    app_exit_edges = used_edges[
+        (used_edges.u == VirtualVertices.APP.value)
+        | (used_edges.v == VirtualVertices.TARGET.value)
+    ]
+    assert len(used_edges) == len(app_exit_edges)
+
+
 def test_get_candidate_edges(get_detections):
     """Test that each detection gets k=10 edges to the next frame."""
     detections = get_detections()
@@ -88,7 +152,9 @@ def test_get_candidate_edges_different_keys(get_detections):
 def test_get_candidate_edges_too_many_neighbours(get_detections):
     """Test that when neighbours exceeds detections per frame all are connected."""
     detections = get_detections()
-    tracker = Tracker(im_shape=(20, 40), k_neighbours=20)
+    tracker = Tracker(im_shape=(20, 40))
+    # setting explicitly here because it defaults to 10
+    tracker.k_neighbours = 20
     kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
     edges = tracker._get_candidate_edges(detections, "t", kd_dict)
     # even though we passed k=20, we should only get 10 edges per node
@@ -113,7 +179,8 @@ def test_get_candidate_edges_single_detection(get_detections):
     detections = get_detections()
     # leave just one detection in frame 2
     detections = detections.drop(detections[detections.t == 2].index[:-1])
-    tracker = Tracker(im_shape=(20, 40), k_neighbours=3)
+    tracker = Tracker(im_shape=(20, 40))
+    tracker.k_neighbours = 3
     kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
     edges = tracker._get_candidate_edges(detections, "t", kd_dict)
     singleton_index = detections[detections.t == 2].index.values[0]
@@ -126,7 +193,8 @@ def test_get_candidate_edges_single_detection(get_detections):
 def test_get_candidate_edges_single_neighbour(get_detections):
     """Test that closest-neighbour is handled gracefully"""
     detections = get_detections()
-    tracker = Tracker(im_shape=(20, 40), k_neighbours=1)
+    tracker = Tracker(im_shape=(20, 40))
+    tracker.k_neighbours = 1
     kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
     edges = tracker._get_candidate_edges(detections, "t", kd_dict)
 
@@ -137,7 +205,8 @@ def test_get_candidate_edges_single_neighbour(get_detections):
 
 def test_get_candidate_edges_correct_distance(human_detections):
     detections, im_shape = human_detections
-    tracker = Tracker(im_shape=im_shape, k_neighbours=2)
+    tracker = Tracker(im_shape=im_shape)
+    tracker.k_neighbours = 2
     kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
     edges = tracker._get_candidate_edges(detections, "t", kd_dict)
     # checking a couple of edges physically
@@ -155,7 +224,8 @@ def test_get_candidate_edges_correct_distance(human_detections):
 
 def test_get_candidate_edges_correct_capacity(get_detections):
     detections = get_detections()
-    tracker = Tracker(im_shape=(20, 40), k_neighbours=1)
+    tracker = Tracker(im_shape=(20, 40))
+    tracker.k_neighbours = 1
     kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
     edges = tracker._get_candidate_edges(detections, "t", kd_dict)
     assert len(edges.capacity.unique()) == 1
@@ -223,7 +293,8 @@ def test_get_all_edges(get_detections):
 
 def test_to_gurobi_model(human_detections):
     detections, im_shape = human_detections
-    tracker = Tracker(im_shape=im_shape, k_neighbours=2)
+    tracker = Tracker(im_shape=im_shape)
+    tracker.k_neighbours = 2
     kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
     edges = tracker._get_candidate_edges(detections, "t", kd_dict)
     edges["cost"] = edges["distance"]
@@ -276,8 +347,10 @@ def test_to_gurobi_model(human_detections):
 
 def test_solve_public(human_detections):
     detections, im_shape = human_detections
-    tracker = Tracker(im_shape=im_shape, k_neighbours=2)
-    tracked = tracker.solve(detections, "t", ("y", "x"))
+    tracker = Tracker(im_shape=im_shape)
+    tracked = tracker.solve(
+        detections, k_neighbours=2, frame_key="t", location_keys=("y", "x")
+    )
     solution_edges = np.asarray(
         [[0, 3], [1, 5], [2, 6], [3, 7], [4, 8], [5, 9], [6, 10]], dtype=int
     )
@@ -293,9 +366,9 @@ def test_solve_with_divisions(human_detections):
 
 def test_solve_debug(human_detections):
     detections, im_shape = human_detections
-    tracker = Tracker(im_shape=im_shape, k_neighbours=2)
+    tracker = Tracker(im_shape=im_shape)
     tracker.DEBUG_MODE = True
-    tracker.solve(detections, "t", ("y", "x"))
+    tracker.solve(detections, k_neighbours=2, frame_key="t", location_keys=("y", "x"))
 
 
 def test_big_instance_unchanged():

@@ -7,6 +7,7 @@ from tifffile import imwrite
 from typing_extensions import Annotated
 
 from tracktour import Tracker, get_ctc_output, get_im_centers
+from tracktour._io_util import get_ctc_ds_name, read_scale
 
 
 def _save_results(masks, tracks, out_dir):
@@ -91,13 +92,21 @@ def ctc(
         location_keys = ("z",) + ("y", "x")
     frame_key = "t"
     value_key = "label"
+    # read scale, warn otherwise
+    ds_name = get_ctc_ds_name(seg_directory)
+    if (scale := read_scale(ds_name)) is None:
+        scale = tuple([1 for _ in range(len(location_keys))])
 
-    tracker = Tracker(frame_shape, k_neighbours)
+    tracker = Tracker(
+        im_shape=frame_shape,
+        scale=scale,
+    )
     tracked = tracker.solve(
         detections,
         frame_key=frame_key,
         location_keys=location_keys,
         value_key=value_key,
+        k_neighbours=k_neighbours,
     )
     sol_graph = tracked.as_nx_digraph()
     relabelled_seg, track_df = get_ctc_output(

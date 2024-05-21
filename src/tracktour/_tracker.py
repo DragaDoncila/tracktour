@@ -111,6 +111,7 @@ class Tracker:
     }
     VIRTUAL_LABEL_TO_INDEX = {v: k for k, v in VIRTUAL_INDEX_TO_LABEL.items()}
     DEBUG_MODE = False
+    USE_DIV_CONSTRAINT = True
 
     @staticmethod
     def index_to_label(index):
@@ -124,13 +125,43 @@ class Tracker:
             return Tracker.VIRTUAL_LABEL_TO_INDEX[label]
         return label
 
-    def __init__(self, im_shape: Tuple[int, int], k_neighbours: int = 10) -> None:
-        self.im_shape = im_shape
-        self.k_neighbours = k_neighbours
+    def __init__(
+        self,
+        im_shape: Tuple[int, int],
+        scale: Tuple[float] = (1, 1),
+    ) -> None:
+        self._im_shape = im_shape
+        # will scale im_shape
+        self.scale = scale
 
+        self.k_neighbours = 10
         self.location_keys = None
         self.frame_key = None
         self.value_key = None
+
+    @property
+    def scale(self):
+        return self._scale
+
+    @scale.setter
+    def scale(self, scale):
+        self._scale = scale
+        self._im_shape = tuple(
+            self._im_shape[i] * self._scale[i] for i in range(len(self._im_shape))
+        )
+
+    @property
+    def im_shape(self):
+        return self._im_shape
+
+    @im_shape.setter
+    def im_shape(self, im_shape):
+        self._im_shape = im_shape
+        if self._scale != (1, 1):
+            warnings.warn(
+                "Setting im_shape will reset scale to (1, 1). Please set scale again if needed."
+            )
+            self._scale = (1, 1)
 
     def solve(
         self,
@@ -139,6 +170,7 @@ class Tracker:
         location_keys: Tuple[str] = ("y", "x"),
         # TODO: we should be able to make this optional
         value_key: Optional[str] = "label",
+        k_neighbours: int = 10,
         # TODO: ?
         # migration_only: bool = False,
     ):
@@ -150,27 +182,37 @@ class Tracker:
             dataframe where each row is a detection, with coordinates at location_keys and time at frame_key. Index must be sequential integers from 0. Detections
             must be sorted by frame.
         frame_key : str, optional
-            _description_, by default "t"
+            dataframe column denoting the image frame, by default "t"
         location_keys : Tuple[str], optional
-            _description_, by default ("y", "x")
+            dataframe columns denoting the pixel coordinates, by default ("y", "x")
         value_key : Optional[str], optional
-            _description_, by default None
+            dataframe column denoting the value of the pixel at the given coordinates, by default None
+        k_neighbours : int, optional
+            number of nearest neighbours to consider for migration, by default 10
 
         Returns
         -------
-        _type_
-            _description_d
+        Tracked
+            tracked object with tracked_detections and tracked_edges dataframes
         """
         self.location_keys = location_keys
         self.frame_key = frame_key
         self.value_key = value_key
+        self.k_neighbours = k_neighbours
+
+        # scale detections (keeping original columns)
+        self._scaled_location_keys = [f"{key}_scaled" for key in location_keys]
+        for i in range(len(self.location_keys)):
+            detections[self._scaled_location_keys[i]] = (
+                detections[self.location_keys[i]] * self.scale[i]
+            )
 
         # TODO: copy/validate detections
         start = time.time()
 
         # build kd-trees
         # TODO: stop passing stuff around now that you store it as an attribute
-        kd_dict = self._build_trees(detections, frame_key, location_keys)
+        kd_dict = self._build_trees(detections, frame_key, self._scaled_location_keys)
 
         # get candidate edges
         edge_df = self._get_candidate_edges(detections, frame_key, kd_dict)
@@ -180,14 +222,14 @@ class Tracker:
 
         # compute costs for division and appearance/exit - on vertices
         enter_exit_cost, div_cost = self._compute_detection_costs(
-            detections, location_keys, edge_df
+            detections, self._scaled_location_keys, edge_df
         )
         detections["enter_exit_cost"] = enter_exit_cost
         detections["div_cost"] = div_cost
 
         # build model
         model, all_edges, all_vertices, gb_time = self._to_gurobi_model(
-            detections, edge_df, frame_key, location_keys
+            detections, edge_df, frame_key, self._scaled_location_keys
         )
 
         build_duration = time.time() - start
@@ -397,25 +439,48 @@ class Tracker:
 
         for vertex_id in detections.index:
             lbl = Tracker.index_to_label(vertex_id)
-            outgoing = flow.select("*", lbl, "*")
-            incoming = flow.select("*", "*", lbl)
-            # node-wise flow conservation
-            m.addConstr(sum(incoming) == sum(outgoing), f"conserv_{lbl}")
-            # minimal flow into each node
-            m.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{lbl}")
+            self._add_constraints_for_vertex(lbl, m, flow)
 
-            # TODO: div optional?
-            div_incoming = flow.select(
-                "*", Tracker.index_to_label(VirtualVertices.DIV.value), lbl
-            )
-            if len(div_incoming):
-                # division only occurs after appearance or migration
-                m.addConstr(
-                    sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{lbl}"
-                )
         m.update()
         build_time = time.time() - start
         return m, all_edges, full_det, build_time
+
+    def _add_constraints_for_vertex(self, v, model, flow_vars):
+        outgoing = flow_vars.select("*", v, "*")
+        incoming = flow_vars.select("*", "*", v)
+        div_incoming = flow_vars.select(
+            "*", Tracker.index_to_label(VirtualVertices.DIV.value), v
+        )
+        if self.USE_DIV_CONSTRAINT:
+            self._add_constraints_with_div(v, outgoing, incoming, div_incoming, model)
+        else:
+            self._add_constraints_without_div(
+                v, outgoing, incoming, div_incoming, model
+            )
+
+    def _add_constraints_with_div(self, v, outgoing, incoming, div_incoming, model):
+        # node-wise flow conservation
+        model.addConstr(sum(incoming) == sum(outgoing), f"conserv_{v}")
+        # minimal flow into each node
+        model.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{v}")
+
+        # TODO: div optional?
+        if len(div_incoming):
+            # division only occurs after appearance or migration
+            model.addConstr(
+                sum(incoming) - sum(div_incoming) >= sum(div_incoming), f"div_{v}"
+            )
+
+    def _add_constraints_without_div(self, v, outgoing, incoming, div_incoming, model):
+        # node-wise flow conservation
+        model.addConstr(sum(incoming) == sum(outgoing), f"conserv_{v}")
+        # exclude incoming flow from division
+        # TODO: div optional?
+        if len(div_incoming):
+            div_incoming = div_incoming[0]
+            incoming = [var for var in incoming if not var.sameAs(div_incoming)]
+        # minimal flow into each node
+        model.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{v}")
 
     def _get_all_vertices(self, detections, frame_key, location_keys):
         """Adds virtual vertices to copy of detections and returns.
@@ -453,8 +518,10 @@ class Tracker:
         return full_det
 
     def _compute_detection_costs(self, detections, location_keys, edge_df):
+        # TODO: should verify there's no negatives here
+        # if there are, we should raise that im_shape was probs wrong
         enter_exit_cost = dist_to_edge_cost_func(
-            self.im_shape, detections, location_keys
+            self._im_shape, detections, location_keys
         )
         div_cost = closest_neighbour_child_cost(detections, location_keys, edge_df)
         return enter_exit_cost, div_cost
