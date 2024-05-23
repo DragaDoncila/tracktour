@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from skimage.graph import central_pixel, pixel_graph
-from skimage.measure import regionprops
+from skimage.measure import regionprops_table
 from skimage.morphology import skeletonize
 from tifffile import imread
 
@@ -83,30 +83,18 @@ def get_im_centers(im_pth):
 
 
 def extract_im_centers(im_arr):
-    centers, labels = [], []
-    for cent, lab in get_centers(im_arr):
-        centers.extend(cent)
-        labels.extend(lab)
-    return get_im_info(centers, labels, im_arr)
+    props = []
+    for frame_prop in get_centers(im_arr):
+        props.append(frame_prop)
+    props = pd.concat(props, ignore_index=True)
+    return props, *get_im_info(im_arr)
 
 
-def get_im_info(centers, labels, im_arr):
-    center_coords = np.asarray(centers)
-    if center_coords.shape[1] == 3:
-        cols = ["t", "y", "x"]
-    elif center_coords.shape[1] == 4:
-        cols = ["t", "z", "y", "x"]
-    else:
-        raise ValueError(
-            f"Only 2D+T and 3D+T images are supported. Centroids have {center_coords.shape[1]} coordinates."
-        )
-    coords_df = pd.DataFrame(center_coords, columns=cols)
-    coords_df["t"] = coords_df["t"].astype(int)
-    coords_df["label"] = labels
+def get_im_info(im_arr):
     min_t = 0
     max_t = im_arr.shape[0] - 1
     corners = [tuple([0 for _ in range(len(im_arr.shape[1:]))]), im_arr.shape[1:]]
-    return coords_df, min_t, max_t, corners
+    return min_t, max_t, corners
 
 
 def get_medoid(prop):
@@ -131,34 +119,53 @@ def get_medoid(prop):
             g, nodes=nodes, shape=region_skeleton.shape, partition_size=100
         )
     medoid_offset = np.asarray(medoid_offset)
-    top_left = np.asarray(prop.bbox[: region.ndim])
+    bbox = prop[[col for col in prop.index if "bbox" in col]].values
+    top_left = np.asarray(bbox[: region.ndim])
     medoid = tuple(top_left + medoid_offset)
     return medoid
 
 
 def get_centers(segmentation):
     n_frames = segmentation.shape[0]
+    if len(segmentation.shape) == 3:
+        centroid_cols = ["y", "x"]
+    elif len(segmentation.shape) == 4:
+        centroid_cols = ["z", "y", "x"]
+    else:
+        raise ValueError(
+            f"Only 2D+T and 3D+T images are supported. Segmentation has shape {segmentation.shape}."
+        )
     for i in tqdm(range(n_frames), desc="Extracting Centroids"):
         current_frame = segmentation[i]
-        centers = []
-        labels = []
-        props = regionprops(current_frame)
-        if props:
-            current_centers = [(i, *prop.centroid) for prop in props]
-            frame_labels = segmentation[tuple(np.asarray(current_centers, dtype=int).T)]
-            label_center_mapping = dict(zip(frame_labels, current_centers))
-            # we haven't found centers for these labels, we need to medoid them
-            unfound_labels = (
-                set(np.unique(current_frame))
-                - set(label_center_mapping.keys())
-                - set([0])
+        props = pd.DataFrame(
+            regionprops_table(
+                current_frame,
+                properties=(
+                    "label",
+                    "centroid",
+                    "area",
+                    "bbox",
+                    "eccentricity",
+                    "image",
+                    "solidity",
+                    "slice",
+                ),
             )
-            for prop in props:
-                if prop.label in unfound_labels:
-                    logger.info(f"Medoiding label {prop.label} on frame {i}.")
-                    label_center_mapping[prop.label] = (i, *get_medoid(prop))
-            # 0 is not a valid label and would only exist in the dictionary
-            # if some labels required the medoid treatment.
-            label_center_mapping.pop(0, None)
-            labels, centers = zip(*label_center_mapping.items())
-        yield centers, labels
+        )
+        props = props.rename(
+            columns={
+                **{
+                    f"centroid-{i}": centroid_cols[i] for i in range(len(centroid_cols))
+                },
+            }
+        )
+        props["t"] = i
+        new_col = props.apply(
+            lambda row: row[centroid_cols]
+            if current_frame[tuple(row[centroid_cols].values.astype(int))]
+            == row["label"]
+            else get_medoid(row),
+            axis=1,
+        )
+        props[centroid_cols] = new_col
+        yield props
