@@ -174,12 +174,19 @@ def get_centers(segmentation):
             }
         )
         props["t"] = i
-        new_col = props.apply(
-            lambda row: row[centroid_cols]
-            if current_frame[tuple(row[centroid_cols].values.astype(int))]
-            == row["label"]
-            else get_medoid(row),
+
+        def medoid_or_centroid(row):
+            if (
+                current_frame[tuple(row[centroid_cols].values.astype(int))]
+                == row["label"]
+            ):
+                row[centroid_cols] = row[centroid_cols]
+            else:
+                row[centroid_cols] = get_medoid(row)
+            return row
+
+        props = props.apply(
+            medoid_or_centroid,
             axis=1,
         )
-        props[centroid_cols] = new_col
         yield props, centroid_cols
