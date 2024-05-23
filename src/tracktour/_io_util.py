@@ -22,6 +22,22 @@ except ImportError:
 
 logger = logging.getLogger("tracktour")
 
+PROPS_OF_INTEREST = [
+    "label",
+    "centroid",
+    "area",
+    "bbox",
+    "image",
+    "solidity",
+    "slice",
+]
+# these attributes (PLUS SPATIAL ATTRIBUTES t, [z], y, x and bbox)
+PROPS_OF_EXPORT = [
+    "label",
+    "area",
+    "solidity",
+]
+
 
 def load_tiff_frames(im_dir):
     all_tiffs = list(sorted(glob.glob(os.path.join(im_dir, "*.tif"))))
@@ -84,9 +100,18 @@ def get_im_centers(im_pth):
 
 def extract_im_centers(im_arr):
     props = []
-    for frame_prop in get_centers(im_arr):
+    centroid_cols = None
+    for frame_prop, centroid_cols in get_centers(im_arr):
         props.append(frame_prop)
-    props = pd.concat(props, ignore_index=True)
+        if centroid_cols is None:
+            centroid_cols = centroid_cols
+    needed_props = (
+        ["t"]
+        + centroid_cols
+        + PROPS_OF_EXPORT
+        + [f"bbox-{i}" for i in range(len(centroid_cols) * 2)]
+    )
+    props = pd.concat(props, ignore_index=True)[needed_props]
     return props, *get_im_info(im_arr)
 
 
@@ -140,16 +165,7 @@ def get_centers(segmentation):
         props = pd.DataFrame(
             regionprops_table(
                 current_frame,
-                properties=(
-                    "label",
-                    "centroid",
-                    "area",
-                    "bbox",
-                    "eccentricity",
-                    "image",
-                    "solidity",
-                    "slice",
-                ),
+                properties=PROPS_OF_INTEREST,
             )
         )
         props = props.rename(
@@ -168,4 +184,4 @@ def get_centers(segmentation):
             axis=1,
         )
         props[centroid_cols] = new_col
-        yield props
+        yield props, centroid_cols
