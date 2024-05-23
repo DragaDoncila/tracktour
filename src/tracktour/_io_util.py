@@ -28,14 +28,12 @@ PROPS_OF_INTEREST = [
     "area",
     "bbox",
     "image",
-    "solidity",
     "slice",
 ]
 # these attributes (PLUS SPATIAL ATTRIBUTES t, [z], y, x and bbox)
 PROPS_OF_EXPORT = [
     "label",
     "area",
-    "solidity",
 ]
 
 
