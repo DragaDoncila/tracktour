@@ -270,6 +270,101 @@ class Tracker:
         tracked = Tracked(**tracked_info)
         return tracked
 
+    def get_lb_ub_for_edge(self, edge):
+        # we fix this edge to its current value
+        if edge["oracle_is_correct"] == 1:
+            return edge["flow"], edge["flow"]
+        # we fix this edge to 0 - edge is not part of the solution
+        elif edge["oracle_is_correct"] == 0:
+            return 0, 0
+        # oracle hasn't told us anything about this edge
+        else:
+            return 0, edge["capacity"]
+
+    def solve_from_existing_edges(
+        self,
+        all_vertices,
+        all_edges,
+        frame_key: str = "t",
+        location_keys: Tuple[str] = ("y", "x"),
+        # TODO: we should be able to make this optional
+        value_key: Optional[str] = "label",
+        k_neighbours: int = 10,
+        # TODO: ?
+        # migration_only: bool = False,
+    ):
+        assert (
+            "cost" in all_edges.columns
+        ), "No cost column in edge dataframe. Try solving from scratch?"
+        assert all(all_edges[all_edges.cost >= 0]), "Some costs are negative."
+        assert (
+            "learned_migration_cost" in all_edges.columns
+        ), "No learned cost to use. Try classifying?"
+
+        self.location_keys = location_keys
+        self.frame_key = frame_key
+        self.value_key = value_key
+        self.k_neighbours = k_neighbours
+
+        start = time.time()
+
+        all_edges["model_cost"] = all_edges.apply(
+            lambda row: row["learned_migration_cost"]
+            if row["learned_migration_cost"] >= 0
+            else row["cost"],
+            axis=1,
+        )
+        all_edges[["model_lb", "model_ub"]] = all_edges.apply(
+            self.get_lb_ub_for_edge, axis=1, result_type="expand"
+        )
+        detections = all_vertices[all_vertices.index >= 0]
+
+        model = self._make_gurobi_model_from_edges(
+            all_edges,
+            detections,
+            "model_cost",
+            all_edges["model_lb"].values,
+            all_edges["model_ub"].values,
+        )
+
+        build_duration = time.time() - start
+
+        # solve and store solution on edges
+        model.optimize()
+        self._store_solution(model, all_edges)
+        solve_duration = model.Runtime
+
+        print(f"Building took {build_duration} seconds")
+
+        # filter down to just migration edges
+        migration_edges = all_edges[
+            (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
+        ].copy()
+
+        wall_time = time.time() - start
+
+        tracked_info = {
+            "tracked_edges": migration_edges,
+            "tracked_detections": detections,
+            "frame_key": self.frame_key,
+            "location_keys": self.location_keys,
+            "value_key": self.value_key,
+        }
+        if self.DEBUG_MODE:
+            tracked_info.update(
+                {
+                    "all_edges": all_edges,
+                    "all_vertices": all_vertices,
+                    "model": model,
+                    "build_time": build_duration,
+                    "gp_model_time": -1,
+                    "solve_time": solve_duration,
+                    "wall_time": wall_time,
+                }
+            )
+        tracked = Tracked(**tracked_info)
+        return tracked
+
     def _build_trees(
         self, detections: pd.DataFrame, frame_key: str, location_keys: Tuple[str]
     ) -> Dict[int, KDTree]:
@@ -402,15 +497,34 @@ class Tracker:
         full_det = self._get_all_vertices(detections, frame_key, location_keys)
         all_edges = self._get_all_edges(edge_df, detections, frame_key)
 
+        m = self._make_gurobi_model_from_edges(all_edges, detections)
+
+        build_time = time.time() - start
+        return m, all_edges, full_det, build_time
+
+    def _make_gurobi_model_from_edges(
+        self,
+        all_edges,
+        detections,
+        cost_col_name: Optional[str] = None,
+        lb_col: Optional[np.ndarray] = None,
+        ub_col: Optional[np.ndarray] = None,
+    ):
+        if cost_col_name is None:
+            cost_col_name = "cost"
+        if lb_col is None:
+            lb_col = [0 for _ in range(len(all_edges))]
+        if ub_col is None:
+            ub_col = all_edges.capacity.values
+
         model_var_info = {
             (
                 e.Index,
                 Tracker.index_to_label(e.u),
                 Tracker.index_to_label(e.v),
-            ): e.cost
+            ): getattr(e, cost_col_name)
             for e in all_edges.itertuples()
         }
-        edge_capacities = all_edges.capacity.values
         var_names = gp.tuplelist(list(model_var_info.keys()))
 
         src_label = Tracker.index_to_label(VirtualVertices.SOURCE.value)
@@ -420,7 +534,7 @@ class Tracker:
 
         m = gp.Model("tracks")
         flow = m.addVars(
-            var_names, obj=model_var_info, lb=0, ub=edge_capacities, name="flow"
+            var_names, obj=model_var_info, lb=lb_col, ub=ub_col, name="flow"
         )
         # flow = (edge_id, source_label, target_label)
         src_out_edges = flow.select("*", src_label, "*")
@@ -442,8 +556,7 @@ class Tracker:
             self._add_constraints_for_vertex(lbl, m, flow)
 
         m.update()
-        build_time = time.time() - start
-        return m, all_edges, full_det, build_time
+        return m
 
     def _add_constraints_for_vertex(self, v, model, flow_vars):
         outgoing = flow_vars.select("*", v, "*")
@@ -454,6 +567,8 @@ class Tracker:
         if self.USE_DIV_CONSTRAINT:
             self._add_constraints_with_div(v, outgoing, incoming, div_incoming, model)
         else:
+            if v == 8602:
+                print(v)
             self._add_constraints_without_div(
                 v, outgoing, incoming, div_incoming, model
             )
