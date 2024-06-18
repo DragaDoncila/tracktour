@@ -271,9 +271,13 @@ class Tracker:
         return tracked
 
     def get_lb_ub_for_edge(self, edge):
-        # we fix this edge to its current value
+        # we lower bound this edge by 1 - edge is part of the solution
         if edge["oracle_is_correct"] == 1:
-            return edge["flow"], edge["flow"]
+            current_flow = edge["flow"]
+            if current_flow > 0:
+                return 1, edge["capacity"]
+            else:
+                return current_flow, current_flow
         # we fix this edge to 0 - edge is not part of the solution
         elif edge["oracle_is_correct"] == 0:
             return 0, 0
@@ -317,7 +321,8 @@ class Tracker:
         all_edges[["model_lb", "model_ub"]] = all_edges.apply(
             self.get_lb_ub_for_edge, axis=1, result_type="expand"
         )
-        detections = all_vertices[all_vertices.index >= 0]
+        detections = all_vertices[all_vertices.t >= 0]
+        detections.index = detections.index.astype(int)
 
         model = self._make_gurobi_model_from_edges(
             all_edges,
