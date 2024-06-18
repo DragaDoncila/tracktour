@@ -279,6 +279,7 @@ class Tracker:
             else:
                 return current_flow, current_flow
         # we fix this edge to 0 - edge is not part of the solution
+        # this is a manual "repair" maybe, but we still don't know the correct edge
         elif edge["oracle_is_correct"] == 0:
             return 0, 0
         # oracle hasn't told us anything about this edge
