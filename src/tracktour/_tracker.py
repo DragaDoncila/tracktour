@@ -607,8 +607,6 @@ class Tracker:
         if self.USE_DIV_CONSTRAINT:
             self._add_constraints_with_div(v, outgoing, incoming, div_incoming, model)
         else:
-            if v == 8602:
-                print(v)
             self._add_constraints_without_div(
                 v, outgoing, incoming, div_incoming, model
             )
