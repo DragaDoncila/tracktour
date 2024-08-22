@@ -337,6 +337,9 @@ class Tracker:
 
         # solve and store solution on edges
         model.optimize()
+        if model.status != 2:
+            print("Model infeasible. Terminating.")
+            return None
         self._store_solution(model, all_edges)
         solve_duration = model.Runtime
 
