@@ -275,6 +275,110 @@ class Tracker:
         tracked = Tracked(**tracked_info)
         return tracked
 
+    def get_lb_ub_for_edge(self, edge):
+        # we lower bound this edge by 1 - edge is part of the solution
+        if edge["oracle_is_correct"] == 1:
+            current_flow = edge["flow"]
+            if current_flow > 0:
+                return 1, edge["capacity"]
+            else:
+                return current_flow, current_flow
+        # we fix this edge to 0 - edge is not part of the solution
+        # this is a manual "repair" maybe, but we still don't know the correct edge
+        elif edge["oracle_is_correct"] == 0:
+            return 0, 0
+        # oracle hasn't told us anything about this edge
+        else:
+            return 0, edge["capacity"]
+
+    def solve_from_existing_edges(
+        self,
+        all_vertices,
+        all_edges,
+        frame_key: str = "t",
+        location_keys: Tuple[str] = ("y", "x"),
+        # TODO: we should be able to make this optional
+        value_key: Optional[str] = "label",
+        k_neighbours: int = 10,
+        # TODO: ?
+        # migration_only: bool = False,
+    ):
+        assert (
+            "cost" in all_edges.columns
+        ), "No cost column in edge dataframe. Try solving from scratch?"
+        assert all(all_edges[all_edges.cost >= 0]), "Some costs are negative."
+        assert (
+            "learned_migration_cost" in all_edges.columns
+        ), "No learned cost to use. Try classifying?"
+
+        self.location_keys = location_keys
+        self.frame_key = frame_key
+        self.value_key = value_key
+        self.k_neighbours = k_neighbours
+
+        start = time.time()
+
+        all_edges["model_cost"] = all_edges.apply(
+            lambda row: row["learned_migration_cost"]
+            if row["learned_migration_cost"] >= 0
+            else row["cost"],
+            axis=1,
+        )
+        all_edges[["model_lb", "model_ub"]] = all_edges.apply(
+            self.get_lb_ub_for_edge, axis=1, result_type="expand"
+        )
+        detections = all_vertices[all_vertices.t >= 0]
+        detections.index = detections.index.astype(int)
+
+        model = self._make_gurobi_model_from_edges(
+            all_edges,
+            detections,
+            "model_cost",
+            all_edges["model_lb"].values,
+            all_edges["model_ub"].values,
+        )
+
+        build_duration = time.time() - start
+
+        # solve and store solution on edges
+        model.optimize()
+        if model.status != 2:
+            print("Model infeasible. Terminating.")
+            return None
+        self._store_solution(model, all_edges)
+        solve_duration = model.Runtime
+
+        print(f"Building took {build_duration} seconds")
+
+        # filter down to just migration edges
+        migration_edges = all_edges[
+            (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
+        ].copy()
+
+        wall_time = time.time() - start
+
+        tracked_info = {
+            "tracked_edges": migration_edges,
+            "tracked_detections": detections,
+            "frame_key": self.frame_key,
+            "location_keys": self.location_keys,
+            "value_key": self.value_key,
+        }
+        if self.DEBUG_MODE:
+            tracked_info.update(
+                {
+                    "all_edges": all_edges,
+                    "all_vertices": all_vertices,
+                    "model": model,
+                    "build_time": build_duration,
+                    "gp_model_time": -1,
+                    "solve_time": solve_duration,
+                    "wall_time": wall_time,
+                }
+            )
+        tracked = Tracked(**tracked_info)
+        return tracked
+
     def _build_trees(
         self, detections: pd.DataFrame, frame_key: str, location_keys: Tuple[str]
     ) -> Dict[int, KDTree]:
@@ -407,12 +511,32 @@ class Tracker:
         full_det = self._get_all_vertices(detections, frame_key, location_keys)
         all_edges = self._get_all_edges(edge_df, detections, frame_key)
 
+        m = self._make_gurobi_model_from_edges(all_edges, detections)
+
+        build_time = time.time() - start
+        return m, all_edges, full_det, build_time
+
+    def _make_gurobi_model_from_edges(
+        self,
+        all_edges,
+        detections,
+        cost_col_name: Optional[str] = None,
+        lb_col: Optional[np.ndarray] = None,
+        ub_col: Optional[np.ndarray] = None,
+    ):
+        if cost_col_name is None:
+            cost_col_name = "cost"
+        if lb_col is None:
+            lb_col = [0 for _ in range(len(all_edges))]
+        if ub_col is None:
+            ub_col = all_edges.capacity.values
+
         flow_var_info = {
             (
                 e.Index,
                 Tracker.index_to_label(e.u),
                 Tracker.index_to_label(e.v),
-            ): e.cost
+            ): getattr(e, cost_col_name)
             for e in all_edges.itertuples()
         }
         edge_capacities = all_edges.capacity.values
@@ -425,17 +549,21 @@ class Tracker:
 
         m = gp.Model("tracks")
         flow = m.addVars(
-            flow_var_names, obj=flow_var_info, lb=0, ub=edge_capacities, name="flow"
+            flow_var_names, obj=flow_var_info, lb=lb_col, ub=ub_col, name="flow"
         )
         if self.PENALIZE_FLOW:
+            warnings.warn(
+                "Penalizing flow! This is not the default behavior and may lead to unexpected results."
+            )
             penalty_var_info = {
                 (
                     e.Index,
                     Tracker.index_to_label(e.u),
                     Tracker.index_to_label(e.v),
                 ): self.FLOW_PENALTY_COEFFICIENT
-                * e.cost
-                for e in edge_df.itertuples()
+                * getattr(e, cost_col_name)
+                # only real edges can be penalized
+                for e in all_edges[(all_edges.u >= 0) & (all_edges.v >= 0)].itertuples()
             }
             penalty_var_names = gp.tuplelist(list(penalty_var_info.keys()))
             penalty_flow = m.addVars(
@@ -468,8 +596,7 @@ class Tracker:
                 m.addConstr(penalty_var >= flow_var - 1, f"penalty_{var[1]}-{var[2]}")
 
         m.update()
-        build_time = time.time() - start
-        return m, all_edges, full_det, build_time
+        return m
 
     def _add_constraints_for_vertex(self, v, model, flow_vars):
         outgoing = flow_vars.select("*", v, "*")

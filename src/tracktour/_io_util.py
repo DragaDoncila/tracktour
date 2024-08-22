@@ -43,12 +43,16 @@ def load_tiff_frames(im_dir):
     if not n_frames:
         raise FileNotFoundError(f"Couldn't find any .tif files in {im_dir}")
 
-    stack = []
-    for f in tqdm(all_tiffs, "Loading TIFFs"):
-        stack.append(imread(f))
+    first_im = imread(all_tiffs[0])
+    shape = (len(all_tiffs), *first_im.shape)
+    dtype = first_im.dtype
+    stack = np.zeros(shape=shape, dtype=dtype)
+    stack[0] = first_im
 
-    im = np.stack(stack)
-    return im
+    for i, f in enumerate(tqdm(all_tiffs[1:], "Loading TIFFs")):
+        imread(f, out=stack[i + 1])
+
+    return stack
 
 
 def get_ctc_output(original_seg, tracked_nx, frame_key, value_key, location_keys):
