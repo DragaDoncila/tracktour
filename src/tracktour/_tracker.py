@@ -103,6 +103,13 @@ class Tracker:
     APPEARANCE_EDGE_CAPACITY = 1
     DIVISION_EDGE_CAPACITY = 1
     MINIMAL_VERTEX_DEMAND = 1
+    FLOW_PENALTY_COEFFICIENT = 50
+
+    USE_DIV_CONSTRAINT = True
+    PENALIZE_FLOW = False
+
+    DEBUG_MODE = False
+
     VIRTUAL_INDEX_TO_LABEL = {
         VirtualVertices.SOURCE.value: "s",
         VirtualVertices.APP.value: "a",
@@ -110,8 +117,6 @@ class Tracker:
         VirtualVertices.TARGET.value: "t",
     }
     VIRTUAL_LABEL_TO_INDEX = {v: k for k, v in VIRTUAL_INDEX_TO_LABEL.items()}
-    DEBUG_MODE = False
-    USE_DIV_CONSTRAINT = True
 
     @staticmethod
     def index_to_label(index):
@@ -526,7 +531,7 @@ class Tracker:
         if ub_col is None:
             ub_col = all_edges.capacity.values
 
-        model_var_info = {
+        flow_var_info = {
             (
                 e.Index,
                 Tracker.index_to_label(e.u),
@@ -534,7 +539,8 @@ class Tracker:
             ): getattr(e, cost_col_name)
             for e in all_edges.itertuples()
         }
-        var_names = gp.tuplelist(list(model_var_info.keys()))
+        edge_capacities = all_edges.capacity.values
+        flow_var_names = gp.tuplelist(list(flow_var_info.keys()))
 
         src_label = Tracker.index_to_label(VirtualVertices.SOURCE.value)
         app_label = Tracker.index_to_label(VirtualVertices.APP.value)
@@ -543,8 +549,26 @@ class Tracker:
 
         m = gp.Model("tracks")
         flow = m.addVars(
-            var_names, obj=model_var_info, lb=lb_col, ub=ub_col, name="flow"
+            flow_var_names, obj=flow_var_info, lb=lb_col, ub=ub_col, name="flow"
         )
+        if self.PENALIZE_FLOW:
+            warnings.warn(
+                "Penalizing flow! This is not the default behavior and may lead to unexpected results."
+            )
+            penalty_var_info = {
+                (
+                    e.Index,
+                    Tracker.index_to_label(e.u),
+                    Tracker.index_to_label(e.v),
+                ): self.FLOW_PENALTY_COEFFICIENT
+                * getattr(e, cost_col_name)
+                # only real edges can be penalized
+                for e in all_edges[(all_edges.u >= 0) & (all_edges.v >= 0)].itertuples()
+            }
+            penalty_var_names = gp.tuplelist(list(penalty_var_info.keys()))
+            penalty_flow = m.addVars(
+                penalty_var_names, obj=penalty_var_info, lb=0, name="penalty"
+            )
         # flow = (edge_id, source_label, target_label)
         src_out_edges = flow.select("*", src_label, "*")
         target_in_edges = flow.select("*", "*", target_label)
@@ -563,6 +587,13 @@ class Tracker:
         for vertex_id in detections.index:
             lbl = Tracker.index_to_label(vertex_id)
             self._add_constraints_for_vertex(lbl, m, flow)
+
+        if self.PENALIZE_FLOW:
+            # for each penalty var, find its flow var and constrain them
+            for var in penalty_flow:
+                penalty_var = penalty_flow[var]
+                flow_var = flow.select(var)[0]
+                m.addConstr(penalty_var >= flow_var - 1, f"penalty_{var[1]}-{var[2]}")
 
         m.update()
         return m
@@ -740,6 +771,7 @@ class Tracker:
                 ]
             ): v.X
             for v in model.getVars()
+            if "flow" in v.VarName
         }
         edge_index, flow = zip(*[(k[0], v) for k, v in sol_dict.items()])
         all_edges.loc[list(edge_index), "flow"] = list(flow)
