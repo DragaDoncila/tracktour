@@ -1,10 +1,13 @@
+import logging
 import os
+import sys
 
 import typer
 from tifffile import imwrite
 from typing_extensions import Annotated
 
 from tracktour import Tracker, get_ctc_output, get_im_centers
+from tracktour._io_util import get_ctc_ds_name, read_scale
 
 
 def _save_results(masks, tracks, out_dir):
@@ -46,11 +49,42 @@ def ctc(
             help="Number of neighbours to consider for assignment in next frame, by default 10.",
         ),
     ] = 10,
+    log_info: Annotated[
+        bool,
+        typer.Option(
+            "--log-info",
+            "-l",
+            help="Whether to display logging information in the terminal.",
+        ),
+    ] = False,
+    log_file: Annotated[
+        str,
+        typer.Option(
+            "--log-file",
+            "-lf",
+            help="Path to save log file, by default `tracktour.log`",
+        ),
+    ] = None,
 ):
     """Run tracktour on Cell Tracking Challenge formatted data.
 
     Saves data in Cell Tracking Challenge format.
     """
+    handlers = []
+    fmt = logging.Formatter(
+        "[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s"
+    )
+    if log_info or log_file is not None:
+        logger = logging.getLogger("tracktour")
+        logger.setLevel(logging.INFO)
+        if log_info:
+            handlers.append(logging.StreamHandler(stream=sys.stdout))
+        if log_file is not None:
+            handlers.append(logging.FileHandler(filename=log_file))
+        for hdlr in handlers:
+            hdlr.setFormatter(fmt)
+            logger.addHandler(hdlr)
+
     ims, detections, _, _, _ = get_im_centers(seg_directory)
     frame_shape = ims.shape[1:]
     location_keys = ("y", "x")
@@ -58,13 +92,21 @@ def ctc(
         location_keys = ("z",) + ("y", "x")
     frame_key = "t"
     value_key = "label"
+    # read scale, warn otherwise
+    ds_name = get_ctc_ds_name(seg_directory)
+    if (scale := read_scale(ds_name)) is None:
+        scale = tuple([1 for _ in range(len(location_keys))])
 
-    tracker = Tracker(frame_shape, k_neighbours)
+    tracker = Tracker(
+        im_shape=frame_shape,
+        scale=scale,
+    )
     tracked = tracker.solve(
         detections,
         frame_key=frame_key,
         location_keys=location_keys,
         value_key=value_key,
+        k_neighbours=k_neighbours,
     )
     sol_graph = tracked.as_nx_digraph()
     relabelled_seg, track_df = get_ctc_output(
