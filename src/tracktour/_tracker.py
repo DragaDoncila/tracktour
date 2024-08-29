@@ -107,6 +107,7 @@ class Tracker:
 
     USE_DIV_CONSTRAINT = True
     PENALIZE_FLOW = False
+    ALLOW_MERGES = True
 
     DEBUG_MODE = False
 
@@ -605,6 +606,10 @@ class Tracker:
             "*", Tracker.index_to_label(VirtualVertices.DIV.value), v
         )
         if self.USE_DIV_CONSTRAINT:
+            if not self.ALLOW_MERGES:
+                raise NotImplementedError(
+                    "Disallowing merges while using explicit division constraint is not yet implemented."
+                )
             self._add_constraints_with_div(v, outgoing, incoming, div_incoming, model)
         else:
             self._add_constraints_without_div(
@@ -633,7 +638,14 @@ class Tracker:
             div_incoming = div_incoming[0]
             incoming = [var for var in incoming if not var.sameAs(div_incoming)]
         # minimal flow into each node
-        model.addConstr(sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{v}")
+        if self.ALLOW_MERGES:
+            model.addConstr(
+                sum(incoming) >= Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{v}"
+            )
+        else:
+            model.addConstr(
+                sum(incoming) == Tracker.MINIMAL_VERTEX_DEMAND, f"demand_{v}"
+            )
 
     def _get_all_vertices(self, detections, frame_key, location_keys):
         """Adds virtual vertices to copy of detections and returns.
