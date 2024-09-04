@@ -69,14 +69,14 @@ def get_ctc_ds_name(pth):
     """Finds CTC dataset name '{name}_{seq#}' from path.
 
     Looks for sequence number, then finds parent directory with
-    two hyphens in the name.
+    two or three hyphens in the name.
     """
     dirs = os.path.normpath(pth).split(os.path.sep)
     seq_index = [index for index, comp in enumerate(dirs) if comp[:2].isdigit()]
     ds_name_index = [index - 1 for index in seq_index]
     ds_name = ""
     for i, idx in enumerate(ds_name_index):
-        if idx >= 0 and len(dirs[idx].split("-")) == 3:
+        if idx >= 0 and len(dirs[idx].split("-")) >= 3:
             ds_name = dirs[idx] + "_" + dirs[seq_index[i]][:2]
             break
     return ds_name
