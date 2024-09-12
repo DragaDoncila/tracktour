@@ -5,8 +5,8 @@ import pandas as pd
 
 def mask_by_id(nodes: pd.DataFrame, seg: np.ndarray, frame_key: str, value_key: str):
     masks = np.zeros_like(seg)
-    max_id = nodes["track-id"].max()
-    for i in range(1, max_id + 1):
+    tids = nodes["track-id"].unique()
+    for i in tids:
         track_nodes = nodes[nodes["track-id"] == i]
         for row in track_nodes.itertuples():
             t = getattr(row, frame_key)
@@ -14,14 +14,9 @@ def mask_by_id(nodes: pd.DataFrame, seg: np.ndarray, frame_key: str, value_key: 
             mask = seg[t] == orig_label
             masks[t][mask] = i
 
-    # colour weird vertices with 1
     unassigned = nodes[nodes["track-id"] == -1]
-    for row in unassigned.itertuples():
-        t = row.t
-        # TODO: breaks for brand new detections that aren't present in the segmentation!
-        orig_label = getattr(row, value_key)
-        mask = seg[t] == orig_label
-        masks[t][mask] = 1
+    if len(unassigned) != 0:
+        raise ValueError("Unassigned track-id for nodes!")
 
     return masks
 

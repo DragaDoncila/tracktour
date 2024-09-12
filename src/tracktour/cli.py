@@ -109,7 +109,7 @@ def ctc(
         k_neighbours=k_neighbours,
     )
     sol_graph = tracked.as_nx_digraph()
-    relabelled_seg, track_df = get_ctc_output(
+    relabelled_seg, track_df, _ = get_ctc_output(
         ims, sol_graph, frame_key, value_key, location_keys
     )
     _save_results(relabelled_seg, track_df, out_directory)

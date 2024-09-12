@@ -8,38 +8,43 @@ import pandas as pd
 def assign_track_id(nx_sol):
     """Assign unique integer track ID to each node.
 
-    Nodes that have more than one incoming edge, or more than
-    two children trigger a new track ID.
+    Nodes that have more than one incoming edge, more than
+    two children, or an outgoing skip-edge trigger a new track ID.
 
     Args:
         nx_sol (nx.DiGraph): directed solution graph
     """
-    roots = [node for node in nx_sol.nodes if nx_sol.in_degree(node) == 0]
-    nx.set_node_attributes(nx_sol, -1, "track-id")
-    track_id = 1
-    for root in roots:
-        if nx_sol.out_degree(root) == 0:
-            nx_sol.nodes[root]["track-id"] = track_id
-
-        for edge_key in nx.edge_dfs(nx_sol, root):
-            source, dest = edge_key[0], edge_key[1]
-            source_out = nx_sol.out_degree(source)
-            # true root
-            if nx_sol.in_degree(source) == 0 and nx_sol.nodes[source]["track-id"] == -1:
-                nx_sol.nodes[source]["track-id"] = track_id
-            # source is splitting or destination has multiple parents
-            if source_out > 1:
-                track_id += 1
-            elif nx_sol.in_degree(dest) > 1:
-                # we've already allocated for this node
-                if nx_sol.nodes[dest]["track-id"] != -1:
-                    continue
-                else:
-                    track_id += 1
-            nx_sol.nodes[dest]["track-id"] = track_id
-
-        track_id += 1
-    return track_id
+    div_merge_skip = set()
+    for node in nx_sol.nodes:
+        # node is a merge
+        if nx_sol.in_degree(node) > 1:
+            merge_edges = set(nx_sol.in_edges(node))
+            div_merge_skip.update(merge_edges)
+        # node is a division
+        if nx_sol.out_degree(node) > 1:
+            div_edges = set(nx_sol.out_edges(node))
+            div_merge_skip.update(div_edges)
+        # node is source of a skip edge
+        if nx_sol.out_degree(node) == 1:
+            source_node = nx_sol.nodes[node]
+            dest_node_id = list(nx_sol.successors(node))[0]
+            dest_node = nx_sol.nodes[dest_node_id]
+            if source_node["t"] + 1 != dest_node["t"]:
+                div_merge_skip.add((node, dest_node_id))
+    non_div_merge = set(nx_sol.edges) - div_merge_skip
+    subg = nx_sol.edge_subgraph(non_div_merge)
+    ccs = nx.connected_components(subg.to_undirected())
+    tid_dict = {}
+    max_id = 0
+    for i, cc in enumerate(ccs, start=1):
+        tid_dict.update({node: i for node in cc})
+        max_id = i
+    for node in nx_sol.nodes:
+        if node not in tid_dict:
+            tid_dict[node] = max_id + 1
+            max_id += 1
+    nx.set_node_attributes(nx_sol, tid_dict, "track-id")
+    return max_id
 
 
 def remove_merges(nx_g: "nx.DiGraph", location_keys: list = ["y", "x"]):
