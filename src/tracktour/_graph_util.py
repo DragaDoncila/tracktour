@@ -31,6 +31,10 @@ def assign_track_id(nx_sol):
             dest_node = nx_sol.nodes[dest_node_id]
             if source_node["t"] + 1 != dest_node["t"]:
                 div_merge_skip.add((node, dest_node_id))
+            # node is a specific parent link that has been assigned
+            # in other processing e.g. by user, or reading from ground truth
+            elif nx_sol.edges[node, dest_node_id].get("manual_parent_link", False):
+                div_merge_skip.add((node, dest_node_id))
     non_div_merge = set(nx_sol.edges) - div_merge_skip
     subg = nx_sol.edge_subgraph(non_div_merge)
     ccs = nx.connected_components(subg.to_undirected())
@@ -80,7 +84,7 @@ def remove_merges(nx_g: "nx.DiGraph", location_keys: list = ["y", "x"]):
 def assign_intertrack_edges(nx_g: "nx.DiGraph"):
     """Currently assigns is_intertrack_edge=True for all edges
     that has more than one incoming edge and/or more than one
-    outgoing ede.
+    outgoing edge.
 
     Args:
         g (nx.DiGraph): directed tracking graph

@@ -282,10 +282,9 @@ class Tracker:
             current_flow = edge["flow"]
             if current_flow > 0:
                 return 1, edge["capacity"]
-            else:
-                return current_flow, current_flow
+            # this edge has 0 current flow or haven't solved, set it to 1
+            return 1, 1
         # we fix this edge to 0 - edge is not part of the solution
-        # this is a manual "repair" maybe, but we still don't know the correct edge
         elif edge["oracle_is_correct"] == 0:
             return 0, 0
         # oracle hasn't told us anything about this edge
@@ -549,9 +548,12 @@ class Tracker:
         target_label = Tracker.index_to_label(VirtualVertices.TARGET.value)
 
         m = gp.Model("tracks")
-        flow = m.addVars(
-            flow_var_names, obj=flow_var_info, lb=lb_col, ub=ub_col, name="flow"
-        )
+        try:
+            flow = m.addVars(
+                flow_var_names, obj=flow_var_info, lb=lb_col, ub=ub_col, name="flow"
+            )
+        except gp.GurobiError as e:
+            print(e)
         if self.PENALIZE_FLOW:
             warnings.warn(
                 "Penalizing flow! This is not the default behavior and may lead to unexpected results."
