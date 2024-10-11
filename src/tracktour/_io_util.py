@@ -57,9 +57,8 @@ def load_tiff_frames(im_dir):
 
 
 def get_ctc_output(original_seg, tracked_nx, frame_key, value_key, location_keys):
-    # remove merges from tracked_nx - keep closest node
-    # mergeless = remove_merges(tracked_nx, location_keys)
-    mergeless = tracked_nx
+    # remove merges (if any) from tracked_nx - keep closest node
+    mergeless = remove_merges(tracked_nx, location_keys)
     max_id = assign_track_id(mergeless)
     node_df = pd.DataFrame.from_dict(mergeless.nodes, orient="index")
     relabelled_seg = mask_by_id(node_df, original_seg, frame_key, value_key)
