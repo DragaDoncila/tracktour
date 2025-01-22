@@ -82,7 +82,9 @@ class Tracked(BaseModel):
             ["flow"],  # optional but may be useful for debugging or finding merge edges
             create_using=nx.DiGraph,
         )
-        det_keys = [self.frame_key] + self.location_keys + [self.value_key]
+        det_keys = [self.frame_key] + self.location_keys
+        if self.value_key in self.tracked_detections.columns:
+            det_keys += [self.value_key]
         sol_graph.add_nodes_from(nodes[det_keys].to_dict(orient="index").items())
         return sol_graph
 
