@@ -3,25 +3,51 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 import pandas as pd
-from napari.layers import Graph, Labels, Tracks
-from napari_graph import DirectedGraph
+from napari.layers import Labels, Tracks
 
 from tracktour._graph_util import assign_track_id
 from tracktour._viz_util import mask_by_id
 
 
-def _get_parents(node_df, max_track_id, sol):
-    parents = defaultdict(set)
-    for tid in range(1, max_track_id):
-        track_nodes = node_df[node_df["track-id"] == tid]
-        if track_nodes.empty:
-            continue
-        # get the first occurrence of this tid
-        node_id = track_nodes["t"].idxmin()
-        for pred in sol.predecessors(node_id):
-            if (p_tid := sol.nodes[pred]["track-id"]) != tid:
-                parents[tid].add(p_tid)
-    return parents
+def _get_parents(sol):
+    """Get napari-like parent graph for sol.
+
+    Parent connections can occur at merges,
+    divisions and skip edges.
+
+    Parameters
+    ----------
+    sol : networkx.DiGraph
+        solution networkx graph
+
+    Returns
+    -------
+    Dict[int, list[int]]
+        dictionary of track-id to list of parent track-ids
+    """
+    parents_graph = defaultdict(list)
+    for node_id, node_info in sol.nodes(data=True):
+        # merge node has multiple parents
+        if sol.in_degree(node_id) > 1:
+            parent_tids = [
+                sol.nodes[parent]["track-id"] for parent in sol.predecessors(node_id)
+            ]
+            parents_graph[node_info["track-id"]].extend(parent_tids)
+        # dividing node's children have it as parent
+        if sol.out_degree(node_id) > 1:
+            for child in sol.successors(node_id):
+                parents_graph[sol.nodes[child]["track-id"]].append(
+                    node_info["track-id"]
+                )
+        # skip edges have different track ID so
+        # dest node gets source added as parent
+        elif sol.out_degree(node_id) == 1:
+            for child in sol.successors(node_id):
+                child_id = sol.nodes[child]["track-id"]
+                if child_id != node_info["track-id"]:
+                    parents_graph[child_id].append(node_info["track-id"])
+    # don't want defaultdict behaviour anymore
+    return dict(parents_graph)
 
 
 def get_tracks_from_nxg(nxg: "nx.DiGraph"):
@@ -33,25 +59,26 @@ def get_tracks_from_nxg(nxg: "nx.DiGraph"):
     Returns:
         tracks (napari.layers.Tracks): track layer of solution
     """
-    if tids := nx.get_node_attributes(nxg, "track-id"):
-        max_id = max(list(tids.values()))
-    else:
-        max_id = assign_track_id(nxg)
+    if any("track-id" not in nxg.nodes[node] for node in nxg.nodes):
+        assign_track_id(nxg)
     sol_node_df = pd.DataFrame.from_dict(nxg.nodes, orient="index")
-    parent_connections = _get_parents(sol_node_df, max_id, nxg)
-    # TODO: 3D BREAK!
+    parent_connections = _get_parents(nxg)
+    location_cols = ["y", "x"]
+    if "z" in sol_node_df.columns:
+        location_cols = ["z"] + location_cols
     track_df = sol_node_df[sol_node_df["track-id"] != -1].sort_values(
         ["track-id", "t"]
-    )[["track-id", "t", "y", "x"]]
-    parent_connections = {k: list(v) for k, v in parent_connections.items()}
+    )[["track-id", "t"] + location_cols]
     track_layer = Tracks(
         track_df, graph=parent_connections, tail_length=1, name="tracks"
     )
-    track_layer.display_id = True
     return track_layer
 
 
 def get_napari_graph(tracked, location_keys, frame_key, value_key):
+    from napari.layers import Graph
+    from napari_graph import DirectedGraph
+
     nodes = tracked.tracked_detections
     mig_edges = tracked.tracked_edges
     pos_keys = [frame_key] + list(location_keys)
