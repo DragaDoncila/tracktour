@@ -20,6 +20,12 @@ class MergeExplorer(Container):
         layout: str = "vertical",
         labels: bool = True,
     ) -> None:
+        try:
+            import napari_arboretum
+        except ModuleNotFoundError as e:
+            raise RuntimeError(
+                "napari_arboretum not found. Cannot use MergeExplorer without it. Did you install `tracktour[napari]`?"
+            ) from e
         super().__init__(
             layout=layout,
             labels=labels,
