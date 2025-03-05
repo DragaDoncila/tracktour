@@ -135,9 +135,20 @@ class Tracker:
 
     def __init__(
         self,
-        im_shape: Tuple[int, int],
-        scale: Tuple[float] = (1, 1),
+        im_shape: Optional[Tuple[int, int]] = None,
+        seg: Optional[np.ndarray] = None,
+        scale: Tuple[float, float] = (1.0, 1.0),
     ) -> None:
+        if im_shape is None and seg is None:
+            raise ValueError("Either im_shape or seg must be provided.")
+        if seg is not None:
+            if im_shape is not None and im_shape != seg.shape[1:]:
+                warnings.warn(
+                    "Provided im_shape does not match seg shape. Using seg shape.",
+                    UserWarning,
+                )
+            im_shape = seg.shape[1:]
+        self._seg = seg
         self._im_shape = im_shape
         # will scale im_shape
         self.scale = scale
@@ -171,14 +182,25 @@ class Tracker:
             )
             self._scale = (1, 1)
 
+    @property
+    def seg(self):
+        return self._seg
+
+    @seg.setter
+    def seg(self, seg):
+        self._seg = seg
+        self._im_shape = seg.shape[1:]
+
     def solve(
         self,
-        detections: pd.DataFrame,
+        detections: pd.DataFrame = None,
         frame_key: str = "t",
-        location_keys: Tuple[str] = ("y", "x"),
+        location_keys: Tuple[str, str] = ("y", "x"),
         # TODO: we should be able to make this optional
         value_key: Optional[str] = "label",
         k_neighbours: int = 10,
+        # TODO: split these into migration, division, appearance, exit choices
+        costs: str = "distance",
         # TODO: ?
         # migration_only: bool = False,
     ):
@@ -186,7 +208,7 @@ class Tracker:
 
         Parameters
         ----------
-        detections : pd.DataFrame
+        detections : pd.DataFrame, optional
             dataframe where each row is a detection, with coordinates at location_keys and time at frame_key. Index must be sequential integers from 0. Detections
             must be sorted by frame.
         frame_key : str, optional
@@ -197,12 +219,17 @@ class Tracker:
             dataframe column denoting the value of the pixel at the given coordinates, by default None
         k_neighbours : int, optional
             number of nearest neighbours to consider for migration, by default 10
+        costs: str, optional
+            use 'distance' for distance-based costs or 'overlap' for overlap-based costs
 
         Returns
         -------
         Tracked
             tracked object with tracked_detections and tracked_edges dataframes
         """
+        if costs not in ["distance", "overlap"]:
+            raise ValueError("Costs must be either 'distance' or 'overlap'.")
+
         self.location_keys = location_keys
         self.frame_key = frame_key
         self.value_key = value_key
@@ -225,15 +252,33 @@ class Tracker:
         # get candidate edges
         edge_df = self._get_candidate_edges(detections, frame_key, kd_dict)
 
-        # migration cost (on edges) is just euclidean distance
-        edge_df["cost"] = edge_df["distance"]
+        if costs == "distance":
+            # migration cost (on edges) is just euclidean distance
+            edge_df["cost"] = edge_df["distance"]
 
-        # compute costs for division and appearance/exit - on vertices
-        enter_exit_cost, div_cost = self._compute_detection_costs(
-            detections, self._scaled_location_keys, edge_df
-        )
-        detections["enter_exit_cost"] = enter_exit_cost
-        detections["div_cost"] = div_cost
+            # compute costs for division and appearance/exit - on vertices
+            enter_exit_cost, div_cost = self._compute_detection_costs(
+                detections, self._scaled_location_keys, edge_df
+            )
+            detections["enter_cost"] = enter_exit_cost
+            detections["exit_cost"] = enter_exit_cost
+            detections["div_cost"] = div_cost
+        else:
+            # migration cost on edges is 1-IOU of two detected objects
+            overlaps = self._compute_edge_overlaps(detections, edge_df)
+            edge_df["iou_overlap"] = overlaps
+            edge_df["cost"] = 1 - edge_df["iou_overlap"]
+
+            # division cost is 1 - IOU sum of all overlapping children
+            div_cost = self._compute_overlap_division_cost(detections, edge_df)
+            detections["div_cost"] = div_cost
+
+            # appearance is infinite
+            detections["enter_cost"] = math.inf
+
+            # disappearance is proportional to the area of the object
+            exit_cost = self._compute_area_exit_cost(detections)
+            detections["exit_cost"] = exit_cost
 
         # build model
         model, all_edges, all_vertices, gb_time = self._to_gurobi_model(
@@ -679,7 +724,8 @@ class Tracker:
             ],
             frame_key: -1,
             **{key: -1 for key in location_keys},
-            "enter_exit_cost": 0,
+            "enter_cost": 0,
+            "exit_cost": 0,
             "div_cost": 0,
         }
         v_vertices_df = pd.DataFrame(v_vertices).set_index("Index")
@@ -694,6 +740,48 @@ class Tracker:
         )
         div_cost = closest_neighbour_child_cost(detections, location_keys, edge_df)
         return enter_exit_cost, div_cost
+
+    def _compute_edge_overlaps(self, detections, edge_df):
+        from traccuracy.matchers._compute_overlap import get_labels_with_overlap
+
+        if self.seg is None:
+            raise ValueError(
+                "Segmentation must be provided for overlap costs. You must initialize the tracker with a segmentation?"
+            )
+        overlap_dict = defaultdict(lambda: defaultdict(lambda: 0))
+        for i in range(self.seg.shape[0] - 1):
+            next_i = i + 1
+            frame = self.seg[i]
+            next_frame = self.seg[next_i]
+            # (frame_label, next_frame_label, iou)
+            overlaps = get_labels_with_overlap(frame, next_frame)
+            for frame_label, next_frame_label, iou in overlaps:
+                overlap_dict[i][(int(frame_label), int(next_frame_label))] = iou
+        overlaps = [1 for _ in range(len(edge_df))]
+        for i, row in enumerate(edge_df.itertuples()):
+            src = detections.loc[row.u]
+            dest = detections.loc[row.v]
+            src_t = src.t
+            iou = overlap_dict[src_t][(src.label, dest.label)]
+            overlaps[i] = iou
+        return overlaps
+
+    def _compute_overlap_division_cost(self, detections, edge_df):
+        div_costs = [1 for _ in range(len(detections))]
+        for det_row in detections.itertuples():
+            src_v = det_row.Index
+            # find all potential children
+            children = edge_df[edge_df.u == src_v]
+            # get overlap of all children
+            child_overlaps = children["iou_overlap"].sum()
+            cost = 1 - child_overlaps
+            div_costs[src_v] = cost
+        return div_costs
+
+    def _compute_area_exit_cost(self, detections):
+        lower_quartile_area = detections.area.quantile(0.25)
+        area_cost = detections.area / lower_quartile_area
+        return area_cost
 
     def _get_all_edges(self, edge_df, detections, frame_key):
         """Adds virtual edges to copy of edge_df and returns.
@@ -734,7 +822,7 @@ class Tracker:
             "v": detections.index.values,
             "capacity": self.APPEARANCE_EDGE_CAPACITY,
             "cost": [
-                r.enter_exit_cost if getattr(r, frame_key) > min_t else 0
+                r.enter_cost if getattr(r, frame_key) > min_t else 0
                 for r in detections.itertuples()
             ],
             "distance": -1,
@@ -745,7 +833,7 @@ class Tracker:
             "v": VirtualVertices.TARGET.value,
             "capacity": self.MERGE_EDGE_CAPACITY,
             "cost": [
-                r.enter_exit_cost if getattr(r, frame_key) < max_t else 0
+                r.exit_cost if getattr(r, frame_key) < max_t else 0
                 for r in detections.itertuples()
             ],
             "distance": -1,

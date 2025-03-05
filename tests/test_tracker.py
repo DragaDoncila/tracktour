@@ -260,7 +260,8 @@ def test_get_all_edges(get_detections):
     enter_exit_cost, div_cost = tracker._compute_detection_costs(
         detections, ("y", "x"), edges
     )
-    detections["enter_exit_cost"] = enter_exit_cost
+    detections["enter_cost"] = enter_exit_cost
+    detections["exit_cost"] = enter_exit_cost
     detections["div_cost"] = div_cost
     all_edges = tracker._get_all_edges(edges, detections, "t")
 
@@ -301,7 +302,8 @@ def test_to_gurobi_model(human_detections):
     enter_exit_cost, div_cost = tracker._compute_detection_costs(
         detections, ("y", "x"), edges
     )
-    detections["enter_exit_cost"] = enter_exit_cost
+    detections["enter_cost"] = enter_exit_cost
+    detections["exit_cost"] = enter_exit_cost
     detections["div_cost"] = div_cost
     m, _, _, _ = tracker._to_gurobi_model(detections, edges, "t", ("y", "x"))
     # assert that we have a flow conserv & demand constraint for each detection
