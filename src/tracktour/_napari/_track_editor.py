@@ -6,7 +6,7 @@ from magicgui.widgets import Container, PushButton, create_widget
 from tracktour._tracker import Tracker
 
 from ._graph_conversion_util import (
-    get_coloured_graph_labels,
+    get_coloured_solution_layers,
     get_detections_from_napari_graph,
 )
 
@@ -53,7 +53,7 @@ class TrackEditor(Container):
             n_neighbours = 10
         tracker = Tracker(seg_ims.shape[1:], k_neighbours=n_neighbours)
         tracked = tracker.solve(detections_df, value_key="label")
-        napari_graph_layer, coloured_seg_layer = get_coloured_graph_labels(
+        napari_graph_layer, coloured_seg_layer = get_coloured_solution_layers(
             tracked,
             tracker.location_keys,
             tracker.frame_key,

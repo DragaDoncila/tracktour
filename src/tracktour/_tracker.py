@@ -2,8 +2,8 @@ import math
 import time
 import warnings
 from collections import defaultdict
-from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from enum import Enum, StrEnum, auto
+from typing import Dict, List, Literal, Optional, Tuple
 
 import gurobipy as gp
 import networkx as nx
@@ -14,6 +14,11 @@ from scipy.spatial import KDTree
 from tqdm import tqdm
 
 from ._costs import closest_neighbour_child_cost, dist_to_edge_cost_func
+
+
+class Cost(StrEnum):
+    DISTANCE = auto()
+    OVERLAP = auto()
 
 
 class VirtualVertices(Enum):
@@ -200,7 +205,7 @@ class Tracker:
         value_key: Optional[str] = "label",
         k_neighbours: int = 10,
         # TODO: split these into migration, division, appearance, exit choices
-        costs: str = "distance",
+        costs: Cost = Cost.DISTANCE,
         # TODO: ?
         # migration_only: bool = False,
     ):

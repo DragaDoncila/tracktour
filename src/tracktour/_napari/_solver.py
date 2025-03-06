@@ -1,14 +1,15 @@
+import typing
 import warnings
 
 import networkx as nx
 import numpy as np
 import pandas as pd
 from dask.array import Array
-from magicgui.widgets import Container, PushButton, create_widget
+from magicgui.widgets import ComboBox, Container, PushButton, create_widget
 
 from tracktour._io_util import extract_im_centers
-from tracktour._napari._graph_conversion_util import get_coloured_graph_labels
-from tracktour._tracker import Tracker
+from tracktour._napari._graph_conversion_util import get_coloured_solution_layers
+from tracktour._tracker import Cost, Tracker
 
 # from napari.qt.threading import create_worker
 
@@ -32,18 +33,25 @@ class TrackingSolver(Container):
         self._n_neighbours_spin = create_widget(
             annotation="int", label="n Neighbours", options={"min": 2}
         )
+        self._cost_combo = create_widget(annotation=Cost, label="Cost Function")
         self._solve_button = PushButton(text="Solve")
 
         self._solve_button.clicked.connect(self._solve_graph)
 
         self.extend(
-            [self._seg_layer_combo, self._n_neighbours_spin, self._solve_button]
+            [
+                self._seg_layer_combo,
+                self._n_neighbours_spin,
+                self._cost_combo,
+                self._solve_button,
+            ]
         )
 
     def _solve_graph(self):
         seg_layer = self._seg_layer_combo.value
         segmentation = seg_layer.data
         n_neighbours = self._n_neighbours_spin.value
+        cost_choice = self._cost_combo.value
         # centers, labels = [], []
 
         # def yield_extend(yielded):
@@ -70,18 +78,22 @@ class TrackingSolver(Container):
             segmentation = np.asarray(segmentation)
         coords_df, min_t, max_t, corners = extract_im_centers(segmentation)
 
-        tracker = Tracker(segmentation.shape[1:], k_neighbours=n_neighbours)
-        tracked = tracker.solve(coords_df, value_key="label")
+        tracker = Tracker(
+            im_shape=segmentation.shape[1:], seg=segmentation, scale=seg_layer.scale[1:]
+        )
+        tracked = tracker.solve(
+            coords_df, value_key="label", k_neighbours=n_neighbours, costs=cost_choice
+        )
 
-        # make graph layer and tracks layer from solution
-        napari_graph_layer, coloured_seg_layer = get_coloured_graph_labels(
+        # make tracks layer and coloured seg/points layer
+        coloured_points, coloured_labels, tracks = get_coloured_solution_layers(
             tracked,
             tracker.location_keys,
             tracker.frame_key,
             tracker.value_key,
+            tracker.scale,
             segmentation,
         )
-        napari_graph_layer.metadata["k_neighbours"] = n_neighbours
-        self._viewer.add_layer(napari_graph_layer)
-        self._viewer.add_layer(coloured_seg_layer)
-        seg_layer.visible = False
+        self._viewer.add_layer(coloured_points)
+        self._viewer.add_layer(coloured_labels)
+        self._viewer.add_layer(tracks)
