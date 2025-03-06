@@ -33,15 +33,19 @@ class TrackingSolver(Container):
         self._n_neighbours_spin = create_widget(
             annotation="int", label="n Neighbours", options={"min": 2}
         )
+        self._n_children_spin = create_widget(
+            annotation="int", label="max Children", options={"min": 2}
+        )
         self._cost_combo = create_widget(annotation=Cost, label="Cost Function")
-        self._solve_button = PushButton(text="Solve")
 
+        self._solve_button = PushButton(text="Solve")
         self._solve_button.clicked.connect(self._solve_graph)
 
         self.extend(
             [
                 self._seg_layer_combo,
                 self._n_neighbours_spin,
+                self._n_children_spin,
                 self._cost_combo,
                 self._solve_button,
             ]
@@ -51,6 +55,7 @@ class TrackingSolver(Container):
         seg_layer = self._seg_layer_combo.value
         segmentation = seg_layer.data
         n_neighbours = self._n_neighbours_spin.value
+        n_children = self._n_children_spin.value
         cost_choice = self._cost_combo.value
         # centers, labels = [], []
 
@@ -81,6 +86,7 @@ class TrackingSolver(Container):
         tracker = Tracker(
             im_shape=segmentation.shape[1:], seg=segmentation, scale=seg_layer.scale[1:]
         )
+        tracker.DIVISION_EDGE_CAPACITY = n_children - 1
         tracked = tracker.solve(
             coords_df, value_key="label", k_neighbours=n_neighbours, costs=cost_choice
         )
