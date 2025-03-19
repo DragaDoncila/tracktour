@@ -292,9 +292,11 @@ def test_get_all_edges(get_detections):
     )
 
 
-def test_to_gurobi_model(human_detections):
+@pytest.mark.parametrize("use_div_constraint", [True, False])
+def test_to_gurobi_model(human_detections, use_div_constraint):
     detections, im_shape = human_detections
     tracker = Tracker(im_shape=im_shape)
+    tracker.USE_DIV_CONSTRAINT = use_div_constraint
     tracker.k_neighbours = 2
     kd_dict = tracker._build_trees(detections, "t", ("y", "x"))
     edges = tracker._get_candidate_edges(detections, "t", kd_dict)
@@ -323,10 +325,11 @@ def test_to_gurobi_model(human_detections):
     )
 
     # assert that we have a div constraint for divisible detections
-    assert (
-        len(list(filter(lambda n: div_pattern.match(n), constr_names)))
-        == num_div_detections
-    )
+    div_constraints = list(filter(lambda n: div_pattern.match(n), constr_names))
+    if use_div_constraint:
+        assert len(div_constraints) == num_div_detections
+    else:
+        assert not div_constraints
 
     # assert that we have the network constraint and dummmy constraints
     assert "conserv_network" in constr_names

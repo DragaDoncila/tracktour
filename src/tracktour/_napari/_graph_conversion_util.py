@@ -3,7 +3,7 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 import pandas as pd
-from napari.layers import Labels, Tracks
+from napari.layers import Labels, Points, Tracks
 
 from tracktour._graph_util import assign_track_id
 from tracktour._viz_util import mask_by_id
@@ -105,30 +105,33 @@ def get_napari_graph(tracked, location_keys, frame_key, value_key):
     return graph_layer
 
 
-def get_coloured_graph_labels(
-    tracked, location_keys, frame_key, value_key, segmentation
+def get_coloured_solution_layers(
+    tracked, location_keys, frame_key, value_key, scale, segmentation
 ):
-    napari_graph_layer = get_napari_graph(tracked, location_keys, frame_key, value_key)
-    subgraph = napari_graph_layer.metadata["subgraph"]
+    layer_scale = (1,) + tuple(scale)
+    subgraph = tracked.as_nx_digraph()
     tracks_layer = get_tracks_from_nxg(subgraph)
-    napari_graph_layer.metadata["tracks"] = tracks_layer
+    tracks_layer.scale = layer_scale
 
     # recolor segmentation and graph points by track-id
     sol_node_df = pd.DataFrame.from_dict(subgraph.nodes, orient="index")
     masks = mask_by_id(sol_node_df, segmentation, frame_key, value_key)
     masked_seg = Labels(masks, name="Track Coloured Seg", visible=False)
-
+    masked_seg.scale = layer_scale
     # subgraph, tracks layer and graph layer **all** need to know about colour :<<<<
     color_dict = {
         node_id: (node_info["track-id"], masked_seg.get_color(node_info["track-id"]))
         for node_id, node_info in subgraph.nodes(data=True)
     }
-    napari_graph_layer.face_color = [val[1] for val in color_dict.values()]
-    napari_graph_layer.metadata["tracks"].metadata = {
-        "colors": dict([(val[0], val[1]) for val in color_dict.values()])
-    }
     nx.set_node_attributes(subgraph, {k: v[1] for k, v in color_dict.items()}, "color")
-    return napari_graph_layer, masked_seg
+    coloured_points = Points(
+        sol_node_df[[frame_key] + list(location_keys)], name="Track Coloured Points"
+    )
+    coloured_points.face_color = [val[1] for val in color_dict.values()]
+    coloured_points.scale = layer_scale
+    coloured_points.size = 1
+
+    return coloured_points, masked_seg, tracks_layer
 
 
 def get_detections_from_napari_graph(graph, segmentation):
