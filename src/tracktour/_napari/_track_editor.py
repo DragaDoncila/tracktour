@@ -3,13 +3,53 @@ from collections import defaultdict
 
 import numpy as np
 from magicgui.widgets import Container, PushButton, create_widget
-from qtpy.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from qtpy.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from tracktour._tracker import Tracker
 
 from ._graph_conversion_util import get_nxg_from_tracks
 
 EDGE_FOCUS_POINT_NAME = "Current Edge"
+
+
+def get_separator_widget():
+    separator = QFrame()
+    separator.setMinimumWidth(1)
+    separator.setFixedHeight(5)
+    separator.setLineWidth(2)
+    separator.setMidLineWidth(2)
+    separator.setFrameShape(QFrame.HLine)
+    separator.setFrameShadow(QFrame.Sunken)
+    return separator
+
+
+def get_counts_grid_layout():
+    text_labels = [
+        ["TP Object: ", "FP Object: ", "FN Object: "],
+        ["TP Track: ", "FP Track: ", "FN Track: "],
+    ]
+    grid_layout = QGridLayout()
+    for row in range(2):
+        for col in range(0, 6, 2):
+            label = QLabel(text_labels[row][col // 2])
+            label.setSizePolicy(
+                QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding
+            )
+            grid_layout.addWidget(label, row, col)
+            label = QLabel("0")
+            label.setSizePolicy(
+                QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding
+            )
+            grid_layout.addWidget(label, row, col + 1)
+    return grid_layout
 
 
 class TrackAnnotator(QWidget):
@@ -36,6 +76,10 @@ class TrackAnnotator(QWidget):
         self._seg_combo.changed.connect(self._setup_annotation_layers)
         self._track_combo.changed.connect(self._setup_annotation_layers)
 
+        self._edit_edges_checkbox = create_widget(annotation=bool, label="Edit Edges")
+        self._edit_edges_checkbox.value = False
+        self._edit_edges_checkbox.changed.connect(self._check_edge_editable)
+
         self.base_layout = QVBoxLayout()
 
         self._edge_control_layout = QHBoxLayout()
@@ -49,9 +93,15 @@ class TrackAnnotator(QWidget):
         self._edge_control_layout.addWidget(self._reset_edge_button.native)
         self._edge_control_layout.addWidget(self._next_edge_button.native)
 
+        self._counts_grid_layout = get_counts_grid_layout()
+
         self.base_layout.addWidget(self._seg_combo.native)
         self.base_layout.addWidget(self._track_combo.native)
+        self.base_layout.addWidget(self._edit_edges_checkbox.native)
+        self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._edge_control_layout)
+        self.base_layout.addWidget(get_separator_widget())
+        self.base_layout.addLayout(self._counts_grid_layout)
         self.setLayout(self.base_layout)
 
         self._next_edge_button.clicked.connect(self._display_next_edge)
@@ -59,6 +109,31 @@ class TrackAnnotator(QWidget):
         self._reset_edge_button.clicked.connect(self._reset_current_edge)
 
         self._setup_annotation_layers()
+
+    def _check_edge_editable(self):
+        if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
+            self._viewer.layers[
+                EDGE_FOCUS_POINT_NAME
+            ].editable = self._edit_edges_checkbox.value
+
+    def _add_gt_layers(self):
+        # we have two layers selected, setup a ground truth segmentation layer
+        # a ground truth points layer and a ground truth tracks layer
+        current_seg_layer = self._seg_combo.value
+
+        scale = current_seg_layer.scale
+        new_seg = np.zeros_like(
+            current_seg_layer.data, dtype=current_seg_layer.data.dtype
+        )
+
+        self._gt_seg_layer = self._viewer.add_labels(
+            new_seg, scale=scale, name="GT Segmentation", visible=False
+        )
+        self._gt_seg_layer.editable = False
+        self._gt_points_layer = self._viewer.add_points(
+            scale=scale, name="GT Centers", visible=False
+        )
+        self._gt_points_layer.editable = False
 
     def _setup_annotation_layers(self):
         if self._seg_combo.value is None or self._track_combo.value is None:
@@ -72,21 +147,7 @@ class TrackAnnotator(QWidget):
             np.asarray(nxg.edges)
         )
 
-        # we have two layers selected, setup a ground truth segmentation layer
-        # a ground truth points layer and a ground truth tracks layer
-        current_seg_layer = self._seg_combo.value
-
-        scale = current_seg_layer.scale
-        new_seg = np.zeros_like(
-            current_seg_layer.data, dtype=current_seg_layer.data.dtype
-        )
-
-        self._gt_seg_layer = self._viewer.add_labels(
-            new_seg, scale=scale, name="GT Segmentation", visible=False
-        )
-        self._gt_points_layer = self._viewer.add_points(
-            scale=scale, name="GT Centers", visible=False
-        )
+        self._add_gt_layers()
 
         # reset display index
         self._current_display_idx = 0
@@ -130,25 +191,34 @@ class TrackAnnotator(QWidget):
         bounding_max = np.maximum(max1, max2) + 10
         return bounding_min, bounding_max
 
-    def _add_current_edge_focus_point(self, loc1, loc2):
+    def _handle_current_edge_change(self, event):
+        pass
+        # if the end-point of the edge is moved, that is an FP/FN edge combo
+        # if the start point or end point is deleted that is an FP edge
+
+    def _add_current_edge_focus_point(self, src, tgt):
         # project loc1 onto loc2 frame
-        loc3 = loc1.copy()
-        loc3[0] = loc2[0]
+        src_proj = src.copy()
+        src_proj[0] = tgt[0]
         # project loc2 onto loc1 frame
-        loc4 = loc2.copy()
-        loc4[0] = loc1[0]
+        tgt_proj = tgt.copy()
+        tgt_proj[0] = src[0]
         if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
             edge_focus_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
-            edge_focus_layer.data = np.vstack([loc1, loc2, loc3, loc4])
+            edge_focus_layer.events.data.disconnect(self._handle_current_edge_change)
+            edge_focus_layer.data = np.vstack([src, tgt, src_proj, tgt_proj])
+            edge_focus_layer.symbol = ["disc", "x", "disc", "x"]
             edge_focus_layer.face_color = ["red", "red", "lightcoral", "lightcoral"]
         else:
             edge_focus_layer = self._viewer.add_points(
-                np.vstack([loc1, loc2, loc3, loc4]),
+                np.vstack([src, tgt, src_proj, tgt_proj]),
                 name=EDGE_FOCUS_POINT_NAME,
                 size=3,
-                symbol="diamond",
+                symbol=["disc", "x", "disc", "x"],
                 face_color=["red", "red", "lightcoral", "lightcoral"],
             )
+        edge_focus_layer.events.data.connect(self._handle_current_edge_change)
+        edge_focus_layer.editable = self._edit_edges_checkbox.value
 
     def _display_edge(self, current_edge_idx):
         current_edge = self._edge_sample_order[current_edge_idx]
@@ -163,9 +233,10 @@ class TrackAnnotator(QWidget):
         # bbox = self._get_region_bbox(src_loc, tgt_loc)
         self._add_current_edge_focus_point(src_loc, tgt_loc)
         self._viewer.camera.center = center
-        self._viewer.dims.current_step = (tgt_loc[0], 0, 0)
+        self._viewer.dims.current_step = (src_loc[0], 0, 0)
 
     def _display_next_edge(self):
+        self._save_edge_annotation()
         self._current_display_idx += 1
         self._display_edge(self._current_display_idx)
 
@@ -177,6 +248,7 @@ class TrackAnnotator(QWidget):
         self._previous_edge_button.enabled = self._current_display_idx > 0
 
     def _display_previous_edge(self):
+        self._save_edge_annotation()
         self._current_display_idx -= 1
         self._display_edge(self._current_display_idx)
         self._next_edge_button.enabled = True
@@ -187,6 +259,9 @@ class TrackAnnotator(QWidget):
         )
         # previous button needs to be enabled if current edge is not the first edge
         self._previous_edge_button.enabled = self._current_display_idx > 0
+
+    def _save_edge_annotation(self):
+        pass
 
     def _reset_current_edge(self):
         self._check_valid_layers()
