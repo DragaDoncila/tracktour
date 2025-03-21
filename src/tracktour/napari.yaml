@@ -23,5 +23,5 @@ contributions:
       display_name: Track Editor
   readers:
     - command: tracktour.get_reader
-      filename_patterns: ['*.csv']
+      filename_patterns: ['*.csv', '*.json']
       accepts_directories: False
