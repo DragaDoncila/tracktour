@@ -84,3 +84,22 @@ def reader(path):
         graph = get_graph(graph_path)
     layer_tuples.append((tracks, {"graph": graph, "name": filename}, "tracks"))
     return layer_tuples
+
+
+def write_tracks(path, layer_data, attributes):
+    columns = ["track-id", "t"]
+    # if data array has 5 columns, we have a z column
+    if layer_data.shape[1] == 5:
+        columns.append("z")
+    columns.extend(["y", "x"])
+
+    tracks_df = pd.DataFrame(layer_data, columns=columns)
+    tracks_df.to_csv(path, index=False)
+    written = [path]
+    graph = attributes["graph"]
+    if graph:
+        graph_path = get_filepath_with_ending(path, "json")
+        with open(graph_path, "w") as f:
+            json.dump(graph, f)
+        written.append(graph_path)
+    return written
