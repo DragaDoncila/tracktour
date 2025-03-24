@@ -17,7 +17,11 @@ from tracktour._tracker import Tracker
 
 from ._graph_conversion_util import get_nxg_from_tracks
 
-EDGE_FOCUS_POINT_NAME = "Current Edge"
+EDGE_FOCUS_POINT_NAME = "Source Target"
+EDGE_FOCUS_VECTOR_NAME = "Current Edge"
+POINT_IN_FRAME_COLOR = [0.816, 0.337, 0.933, 1]
+POINT_OUT_FRAME_COLOR = [0.816, 0.337, 0.933, 0.5]
+VECTOR_COLOR = [1, 1, 1, 1]
 
 
 def get_separator_widget():
@@ -155,6 +159,9 @@ class TrackAnnotator(QWidget):
 
         self._next_edge_button.enabled = True
 
+        # connect current step event to colour the points layer appropriately
+        self._viewer.dims.events.current_step.connect(self._handle_current_step_change)
+
     def _check_valid_layers(self):
         if self._seg_combo.value is None:
             raise ValueError("No segmentation layer selected")
@@ -191,36 +198,72 @@ class TrackAnnotator(QWidget):
         bounding_max = np.maximum(max1, max2) + 10
         return bounding_min, bounding_max
 
+    def _handle_current_step_change(self, event):
+        if EDGE_FOCUS_POINT_NAME not in self._viewer.layers:
+            return
+        points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
+        current_step = event.value
+        src_loc, tgt_loc = self._get_edge_locs()
+        src_t = src_loc[0]
+        tgt_t = tgt_loc[0]
+        current_t = current_step[0]
+        if current_t == src_t:
+            points_layer.face_color = [POINT_IN_FRAME_COLOR, POINT_OUT_FRAME_COLOR]
+        elif current_t == tgt_t:
+            points_layer.face_color = [POINT_OUT_FRAME_COLOR, POINT_IN_FRAME_COLOR]
+        else:
+            points_layer.face_color = [POINT_OUT_FRAME_COLOR, POINT_OUT_FRAME_COLOR]
+
     def _handle_current_edge_change(self, event):
         pass
         # if the end-point of the edge is moved, that is an FP/FN edge combo
         # if the start point or end point is deleted that is an FP edge
 
     def _add_current_edge_focus_point(self, src, tgt):
-        # project loc1 onto loc2 frame
-        src_proj = src.copy()
-        src_proj[0] = tgt[0]
-        # project loc2 onto loc1 frame
-        tgt_proj = tgt.copy()
-        tgt_proj[0] = src[0]
+        # we drop the first dimension of the points, which is the frame
+        src_proj = src[1:]
+        tgt_proj = tgt[1:]
+        points_data = np.vstack([src_proj, tgt_proj])
+        points_symbols = ["disc", "ring"]
+        points_face_color = [POINT_IN_FRAME_COLOR, POINT_OUT_FRAME_COLOR]
+
+        vectors_data = [[src_proj, tgt_proj - src_proj]]
+        vectors_style = "arrow"
+        vectors_color = VECTOR_COLOR
+        vectors_width = 0.3
         if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
             edge_focus_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
             edge_focus_layer.events.data.disconnect(self._handle_current_edge_change)
-            edge_focus_layer.data = np.vstack([src, tgt, src_proj, tgt_proj])
-            edge_focus_layer.symbol = ["disc", "x", "disc", "x"]
-            edge_focus_layer.face_color = ["red", "red", "lightcoral", "lightcoral"]
+            edge_focus_layer.data = points_data
+            edge_focus_layer.symbol = points_symbols
+            edge_focus_layer.face_color = points_face_color
         else:
             edge_focus_layer = self._viewer.add_points(
-                np.vstack([src, tgt, src_proj, tgt_proj]),
+                points_data,
                 name=EDGE_FOCUS_POINT_NAME,
                 size=3,
-                symbol=["disc", "x", "disc", "x"],
-                face_color=["red", "red", "lightcoral", "lightcoral"],
+                symbol=points_symbols,
+                face_color=points_face_color,
+            )
+
+        if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
+            edge_focus_layer = self._viewer.layers[EDGE_FOCUS_VECTOR_NAME]
+            edge_focus_layer.data = vectors_data
+        else:
+            edge_focus_layer = self._viewer.add_vectors(
+                vectors_data,
+                name=EDGE_FOCUS_VECTOR_NAME,
+                edge_width=vectors_width,
+                edge_color=vectors_color,
+                vector_style=vectors_style,
             )
         edge_focus_layer.events.data.connect(self._handle_current_edge_change)
         edge_focus_layer.editable = self._edit_edges_checkbox.value
+        self._viewer.layers.selection.active = edge_focus_layer
 
-    def _display_edge(self, current_edge_idx):
+    def _get_edge_locs(self, current_edge_idx=None):
+        if current_edge_idx is None:
+            current_edge_idx = self._current_display_idx
         current_edge = self._edge_sample_order[current_edge_idx]
         nxg = self._get_original_nxg()
         src_idx = current_edge[0]
@@ -228,6 +271,10 @@ class TrackAnnotator(QWidget):
         # locating the source and target nodes, ignoring track-id
         src_loc = get_loc_array(nxg.nodes[src_idx])
         tgt_loc = get_loc_array(nxg.nodes[tgt_idx])
+        return src_loc, tgt_loc
+
+    def _display_edge(self, current_edge_idx):
+        src_loc, tgt_loc = self._get_edge_locs(current_edge_idx)
         # get bounding box containing region of both nodes, ignoring t
         center = get_region_center(src_loc[1:], tgt_loc[1:])
         # bbox = self._get_region_bbox(src_loc, tgt_loc)
