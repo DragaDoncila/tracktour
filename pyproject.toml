@@ -60,7 +60,7 @@ napari = [
     "napari",
     "napari-graph",
 ]
-test = ["pytest>=6.0"]
+test = ["pytest>=6.0", "napari"]
 dev = ["pre-commit"]
 
 [project.urls]
