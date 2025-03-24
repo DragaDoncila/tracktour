@@ -1,6 +1,5 @@
 import json
 
-import napari
 import numpy as np
 import pandas as pd
 import pytest
@@ -121,6 +120,8 @@ def test_writer_with_graph(tmp_path, dummy_tracks):
 
 
 # def test_napari_round_trip(tmp_path, dummy_tracks, make_napari_viewer):
+#    import napari
+#
 #     tracks_df, graph = dummy_tracks
 #     write_tracks(str(tmp_path / "dummy.csv"), tracks_df.values, {"graph": graph})
 
