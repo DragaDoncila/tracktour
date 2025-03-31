@@ -21,7 +21,7 @@ from ._graph_conversion_util import get_nxg_from_tracks
 EDGE_FOCUS_POINT_NAME = "Source Target"
 EDGE_FOCUS_VECTOR_NAME = "Current Edge"
 POINT_IN_FRAME_COLOR = [0.816, 0.337, 0.933, 1]
-POINT_OUT_FRAME_COLOR = [0.816, 0.337, 0.933, 0.5]
+POINT_OUT_FRAME_COLOR = [0.816, 0.337, 0.933, 0.3]
 VECTOR_COLOR = [1, 1, 1, 1]
 
 FP_EDGE_ATTR = "tracktour_annotated_fp"
@@ -95,6 +95,8 @@ class TrackAnnotator(QWidget):
         self._gt_points_layer = None
         self._gt_tracks_layer = None
         self._gt_nxg = None
+
+        self.points_layer_changed = False
 
         self._seg_combo = create_widget(
             annotation="napari.layers.Labels", label="Segmentation"
@@ -243,24 +245,14 @@ class TrackAnnotator(QWidget):
         points_symbols = ["disc", "ring"]
         points_face_color = [POINT_IN_FRAME_COLOR, POINT_OUT_FRAME_COLOR]
 
+        point_focus_layer = self._display_points_layer(
+            points_data, points_symbols, points_face_color
+        )
+
         vectors_data = [[src_proj, tgt_proj - src_proj]]
         vectors_style = "arrow"
         vectors_color = VECTOR_COLOR
         vectors_width = 0.3
-        if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
-            point_focus_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
-            point_focus_layer.data = points_data
-            point_focus_layer.symbol = points_symbols
-            point_focus_layer.face_color = points_face_color
-        else:
-            point_focus_layer = self._viewer.add_points(
-                points_data,
-                name=EDGE_FOCUS_POINT_NAME,
-                size=3,
-                symbol=points_symbols,
-                face_color=points_face_color,
-            )
-
         if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
             edge_focus_layer = self._viewer.layers[EDGE_FOCUS_VECTOR_NAME]
             edge_focus_layer.data = vectors_data
@@ -287,20 +279,98 @@ class TrackAnnotator(QWidget):
         tgt_loc = get_loc_array(nxg.nodes[tgt_idx])
         return src_loc, tgt_loc
 
+    def _display_points_layer(self, points_data, points_symbols, points_face_color):
+        if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
+            self._viewer.layers[EDGE_FOCUS_POINT_NAME].events.data.disconnect(
+                self._set_needs_saving
+            )
+            point_focus_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
+            point_focus_layer.data = points_data
+            point_focus_layer.symbol = points_symbols
+            point_focus_layer.face_color = points_face_color
+
+        else:
+            point_focus_layer = self._viewer.add_points(
+                points_data,
+                name=EDGE_FOCUS_POINT_NAME,
+                size=3,
+                symbol=points_symbols,
+                face_color=points_face_color,
+            )
+        point_focus_layer.events.data.connect(self._set_needs_saving)
+        return point_focus_layer
+
+    def _set_needs_saving(self, event):
+        if event.action == "changed" or event.action == "removed":
+            self.points_layer_changed = True
+
     def _display_edge(self, current_edge_idx):
         src_loc, tgt_loc = self._get_edge_locs(current_edge_idx)
-        # get bounding box containing region of both nodes, ignoring t
+        # get center of the region for zooming
         center = get_region_center(src_loc[1:], tgt_loc[1:])
         # bbox = self._get_region_bbox(src_loc, tgt_loc)
         self._add_current_edge_focus_point(src_loc, tgt_loc)
         self._viewer.camera.center = center
         self._viewer.dims.current_step = (src_loc[0], 0, 0)
 
+    def _display_gt_edge(self, current_edge_idx):
+        edge_info = self._get_original_nxg().edges[
+            self._edge_sample_order[current_edge_idx]
+        ]
+        original_src_loc, original_tgt_loc = self._get_edge_locs(current_edge_idx)
+        # there's a gt edge we can display here, let's do that
+        if "gt_edge" in edge_info:
+            gt_edge_idx = edge_info["gt_edge"]
+            src_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[0]])
+            tgt_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[1]])
+            center = get_region_center(src_loc[1:], tgt_loc[1:])
+            self._add_current_edge_focus_point(src_loc, tgt_loc)
+            self._viewer.camera.center = center
+            self._viewer.dims.current_step = (src_loc[0], 0, 0)
+        # there's no edge, but we may want to display some points, with no edge
+        else:
+            points_data = []
+            points_symbols = []
+            points_face_colors = []
+            camera_center = get_region_center(
+                original_src_loc[1:], original_tgt_loc[1:]
+            )
+            if edge_info["src_loc"] is not None:
+                src_loc = np.concatenate([[edge_info["t"]], edge_info["src_loc"]])
+                points_data.append(src_loc[1:])
+                points_symbols.append("disc")
+                points_face_colors.append(POINT_IN_FRAME_COLOR)
+                camera_center = src_loc[1:]
+                current_step = src_loc[0]
+            if edge_info["tgt_loc"] is not None:
+                tgt_loc = np.concatenate([[edge_info["t"]], edge_info["tgt_loc"]])
+                points_data.append(tgt_loc[1:])
+                points_symbols.append("ring")
+                points_face_colors.append(POINT_OUT_FRAME_COLOR)
+                camera_center = tgt_loc[1:]
+                current_step = tgt_loc[0]
+            points_focus_layer = self._display_points_layer(
+                points_data, points_symbols, points_face_colors
+            )
+            self._viewer.camera.center = camera_center
+            self._viewer.dims.current_step = (current_step, 0, 0)
+            self._viewer.layers.selection.active = points_focus_layer
+            points_focus_layer.mode = "SELECT"
+
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
         if edge_saved:
             self._current_display_idx += 1
-        self._display_edge(self._current_display_idx)
+        if (
+            "seen"
+            in self._get_original_nxg().edges[
+                self._edge_sample_order[self._current_display_idx]
+            ]
+        ):
+            self._display_gt_edge(self._current_display_idx)
+            # need to reset the counts we've updated?
+        else:
+            self._display_edge(self._current_display_idx)
 
         # next button needs to be enabled current edge is not the last edge
         self._next_edge_button.enabled = (
@@ -313,7 +383,15 @@ class TrackAnnotator(QWidget):
         edge_saved = self._save_edge_annotation()
         if edge_saved:
             self._current_display_idx -= 1
-        self._display_edge(self._current_display_idx)
+        if (
+            "seen"
+            in self._get_original_nxg().edges[
+                self._edge_sample_order[self._current_display_idx]
+            ]
+        ):
+            self._display_gt_edge(self._current_display_idx)
+        else:
+            self._display_edge(self._current_display_idx)
         self._next_edge_button.enabled = True
 
         # next button needs to be enabled current edge is not the last edge
@@ -337,41 +415,76 @@ class TrackAnnotator(QWidget):
                 return node
         return new_idx
 
+    def _get_original_matching_node(self, frame, label):
+        """
+        Get the original node index that matches the frame and label
+        """
+        nxg = self._get_original_nxg()
+        for node in nxg.nodes:
+            node_info = nxg.nodes[node]
+            if node_info["t"] == frame and node_info["label"] == label:
+                return node
+        raise ValueError(f"No node found with frame {frame} and label {label}")
+
     def get_gt_node_attrs(self, src_points_idx, tgt_points_idx):
+        nxg = self._get_original_nxg()
         gt_src_attrs = {}
         gt_tgt_attrs = {}
 
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
         original_src_loc, original_tgt_loc = self._get_edge_locs()
-        gt_src_attrs["t"] = int(original_src_loc[0])
-        gt_tgt_attrs["t"] = int(original_tgt_loc[0])
 
-        gt_src_loc = points_layer.data[src_points_idx]
-        gt_tgt_loc = points_layer.data[tgt_points_idx]
-        gt_src_loc = np.concatenate([[original_src_loc[0]], gt_src_loc])
-        gt_tgt_loc = np.concatenate([[original_tgt_loc[0]], gt_tgt_loc])
-        gt_src_attrs.update(split_coords(gt_src_loc))
-        gt_tgt_attrs.update(split_coords(gt_tgt_loc))
+        annotated_src_loc = points_layer.data[src_points_idx]
+        annotated_tgt_loc = points_layer.data[tgt_points_idx]
+        annotated_src_loc = np.concatenate([[original_src_loc[0]], annotated_src_loc])
+        annotated_tgt_loc = np.concatenate([[original_tgt_loc[0]], annotated_tgt_loc])
 
         # check if either of the points are over blank space
-        gt_src_idx = get_int_loc(gt_src_loc)
-        gt_tgt_idx = get_int_loc(gt_tgt_loc)
+        annotated_src_idx = get_int_loc(annotated_src_loc)
+        annotated_tgt_idx = get_int_loc(annotated_tgt_loc)
         seg_layer = self._seg_combo.value
-        if seg_layer.data[tuple(gt_src_idx)] == 0:
+        src_label = seg_layer.data[tuple(annotated_src_idx)]
+        tgt_label = seg_layer.data[tuple(annotated_tgt_idx)]
+        if src_label == 0:
             # source was a previous FN
             gt_src_attrs[FN_NODE_ATTR] = True
-        elif seg_layer.data[tuple(gt_tgt_idx)] == 0:
+            # mark the tgt TP
+            gt_tgt_attrs[TP_NODE_ATTR] = True
+            # give src a non-existent original index
+            gt_src_attrs["orig_idx"] = -1
+            # give src the location of the "added" point
+            gt_src_attrs.update(split_coords(annotated_src_loc))
+            # give tgt the location and index of the original point
+            tgt_frame = annotated_tgt_idx[0]
+            orig_tgt_idx = self._get_original_matching_node(tgt_frame, tgt_label)
+            gt_tgt_attrs["orig_idx"] = orig_tgt_idx
+            gt_tgt_attrs.update(get_loc_dict(nxg.nodes[orig_tgt_idx]))
+        elif tgt_label == 0:
             # target was a previous FN
             gt_tgt_attrs[FN_NODE_ATTR] = True
+            # mark the src TP
+            gt_src_attrs[TP_NODE_ATTR] = True
+            # give tgt a non-existent original index
+            gt_tgt_attrs["orig_idx"] = -1
+            # give tgt the location of the "added" point
+            gt_tgt_attrs.update(split_coords(annotated_tgt_loc))
+            # give src the location and index of the original point
+            src_frame = annotated_src_idx[0]
+            orig_src_idx = self._get_original_matching_node(src_frame, src_label)
+            gt_src_attrs["orig_idx"] = orig_src_idx
+            gt_src_attrs.update(get_loc_dict(nxg.nodes[orig_src_idx]))
         else:
             # both nodes already existed and still do, so they are TP
             gt_src_attrs[TP_NODE_ATTR] = True
             gt_tgt_attrs[TP_NODE_ATTR] = True
-
-        original_edge = self._edge_sample_order[self._current_display_idx]
-        gt_src_attrs["orig_idx"] = int(original_edge[0])
-        gt_tgt_attrs["orig_idx"] = int(original_edge[1])
-
+            src_frame = annotated_src_idx[0]
+            orig_src_idx = self._get_original_matching_node(src_frame, src_label)
+            tgt_frame = annotated_tgt_idx[0]
+            orig_tgt_idx = self._get_original_matching_node(tgt_frame, tgt_label)
+            gt_src_attrs["orig_idx"] = orig_src_idx
+            gt_tgt_attrs["orig_idx"] = orig_tgt_idx
+            gt_src_attrs.update(get_loc_dict(nxg.nodes[orig_src_idx]))
+            gt_tgt_attrs.update(get_loc_dict(nxg.nodes[orig_tgt_idx]))
         return gt_src_attrs, gt_tgt_attrs
 
     def _save_edge_annotation(self):
@@ -379,10 +492,19 @@ class TrackAnnotator(QWidget):
         original_src_loc, original_tgt_loc = self._get_edge_locs()
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
         nxg = self._get_original_nxg()
-        if len(points_layer.data) > 2:
+
+        has_two_unchanged_points = False
+        num_points = len(points_layer.data)
+        # check if the state of the points layer is valid
+        if num_points > 2:
             warnings.warn("More than two points in the current edge. Resetting edge.")
             return False
-        elif len(points_layer.data) == 2:
+        # TODO: is this actually ok?
+        if num_points == 0:
+            warnings.warn("No points in the current edge. Resetting edge.")
+            return False
+        # points data is either 2 or 1
+        if num_points == 2:
             point_one_loc = points_layer.data[0]
             point_two_loc = points_layer.data[1]
             point_one_moved = not np.allclose(point_one_loc, original_src_loc[1:])
@@ -391,25 +513,6 @@ class TrackAnnotator(QWidget):
             if point_one_moved and point_two_moved:
                 warnings.warn("Both points have changed. Resetting edge.")
                 return False
-            # have either of the points moved?
-            if point_one_moved or point_two_moved:
-                print("Point moved!")
-                # we have an FP/FN edge combo
-                # mark the networkx edge as an FP edge
-                nxg.edges[original_edge][FP_EDGE_ATTR] = True
-                gt_edge_attr = {FN_EDGE_ATTR: True}
-                self._fp_track_count += 1
-                self._fn_track_count += 1
-            else:
-                # no points moved, we have a TP edge, add it to nxg
-                nxg.edges[original_edge][TP_EDGE_ATTR] = True
-                gt_edge_attr = {TP_EDGE_ATTR: True}
-                # mark the nodes as TP
-                nxg.nodes[original_edge[0]][TP_NODE_ATTR] = True
-                nxg.nodes[original_edge[1]][TP_NODE_ATTR] = True
-                print("TP edge")
-                self._tp_track_count += 1
-                self._tp_object_count += 2
             (src_idx,) = np.where(points_layer.symbol == "disc")
             (tgt_idx,) = np.where(points_layer.symbol == "ring")
             if len(src_idx) == 0 or len(tgt_idx) == 0:
@@ -417,25 +520,83 @@ class TrackAnnotator(QWidget):
                     "Missing source disc or target ring. Did you change symbols? Resetting edge."
                 )
                 return False
+            if not point_one_moved and not point_two_moved:
+                has_two_unchanged_points = True
+        # single point in the data
+        else:
+            if points_layer.symbol[0] != "disc" and points_layer.symbol[0] != "ring":
+                warnings.warn(
+                    "Remaining point is neither source nor target. Did you change symbols? Resetting edge."
+                )
+                return False
+
+        # if no changes and we've seen it before, we don't need to do anything
+        if (
+            has_two_unchanged_points or not self.points_layer_changed
+        ) and "seen" in nxg.edges[original_edge]:
+            print("No changes on seen edge")
+            return True
+        # if we've seen the edge before and there's been changes, we need to undo
+        if (
+            "seen" in nxg.edges[original_edge]
+            and self.points_layer_changed
+            and not has_two_unchanged_points
+        ):
+            print("Need to undo changes")
+
+        # save the edge
+        if num_points == 2:
+            if has_two_unchanged_points:
+                # this is a TP edge
+                nxg.edges[original_edge][TP_EDGE_ATTR] = True
+                gt_edge_attr = {TP_EDGE_ATTR: True}
+                # mark the nodes as TP
+                nxg.nodes[original_edge[0]][TP_NODE_ATTR] = True
+                nxg.nodes[original_edge[1]][TP_NODE_ATTR] = True
+                self._tp_track_count += 1
+                # self._tp_object_count += 2
+            else:
+                # one of the points must have moved, we have an FP/FN edge
+                nxg.edges[original_edge][FP_EDGE_ATTR] = True
+                gt_edge_attr = {FN_EDGE_ATTR: True}
+                self._fp_track_count += 1
+                self._fn_track_count += 1
+            # add the GT edge
             src_idx = int(src_idx[0])
             tgt_idx = int(tgt_idx[0])
             gt_src_attrs, gt_tgt_attrs = self.get_gt_node_attrs(src_idx, tgt_idx)
             if FN_NODE_ATTR in gt_src_attrs or FN_NODE_ATTR in gt_tgt_attrs:
                 self._fn_object_count += 1
+                self._tp_object_count += 1
+            # both objects existed so we need to bump the tp object count
+            else:
+                self._tp_object_count += 2
             # add nodes with new indices, add edge
             src_index = self.get_new_node_index(gt_src_attrs)
             self._gt_nxg.add_nodes_from([(src_index, gt_src_attrs)])
             tgt_index = self.get_new_node_index(gt_tgt_attrs)
             self._gt_nxg.add_nodes_from([(tgt_index, gt_tgt_attrs)])
             self._gt_nxg.add_edge(src_index, tgt_index, **gt_edge_attr)
-        # we've lost one or both points, we have an FP edge
-        # TODO: checking for orphaned nodes, we should track them as we go
-        else:
-            # points data is 0, we mark the edge as FP, do nothing with the nodes
-            # nothing needs to be added to GT?
+            # update the original nxg with the GT edge index
+            nxg.edges[original_edge]["gt_edge"] = (src_index, tgt_index)
+        elif num_points == 1:
+            # this is an FP edge and we only have a single point left
             nxg.edges[original_edge][FP_EDGE_ATTR] = True
             self._fp_track_count += 1
+            # need to be able to restore this point/lack of points if we come back to this
+            # edge, so store src and tgt loc in the edge data
+            nxg.edges[original_edge]["src_loc"] = None
+            nxg.edges[original_edge]["tgt_loc"] = None
+            if len(points_layer.data) == 1:
+                if points_layer.symbol[0] == "disc":
+                    nxg.edges[original_edge]["src_loc"] = points_layer.data[0]
+                else:
+                    nxg.edges[original_edge]["tgt_loc"] = points_layer.data[0]
+
+        # mark this edge as seen
         self._update_label_displays()
+        nxg.edges[original_edge]["seen"] = True
+        self.points_layer_changed = False
         return True
 
     def _update_label_displays(self):
@@ -480,6 +641,19 @@ def get_loc_array(node_info):
     loc.append(node_info["y"])
     loc.append(node_info["x"])
     return np.asarray(loc)
+
+
+def get_loc_dict(node_info):
+    """
+    Get the location dictionary from node info
+    """
+    loc = {}
+    loc["t"] = node_info["t"]
+    if "z" in node_info:
+        loc["z"] = node_info["z"]
+    loc["y"] = node_info["y"]
+    loc["x"] = node_info["x"]
+    return loc
 
 
 def split_coords(loc):
