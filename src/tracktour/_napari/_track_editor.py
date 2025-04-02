@@ -114,7 +114,7 @@ class TrackAnnotator(QWidget):
         self._previous_edge_button.enabled = False
 
         self._reset_edge_button = PushButton(text="Reset Current Edge")
-        self._next_edge_button = PushButton(text="Next")
+        self._next_edge_button = PushButton(text="Save && Next")
 
         self._edge_control_layout.addWidget(self._previous_edge_button.native)
         self._edge_control_layout.addWidget(self._reset_edge_button.native)
@@ -149,25 +149,6 @@ class TrackAnnotator(QWidget):
         self._reset_edge_button.clicked.connect(self._reset_current_edge)
 
         self._setup_annotation_layers()
-
-    def _add_gt_layers(self):
-        # we have two layers selected, setup a ground truth segmentation layer
-        # a ground truth points layer and a ground truth tracks layer
-        current_seg_layer = self._seg_combo.value
-
-        scale = current_seg_layer.scale
-        new_seg = np.zeros_like(
-            current_seg_layer.data, dtype=current_seg_layer.data.dtype
-        )
-
-        self._gt_seg_layer = self._viewer.add_labels(
-            new_seg, scale=scale, name="GT Segmentation", visible=False
-        )
-        self._gt_seg_layer.editable = False
-        self._gt_points_layer = self._viewer.add_points(
-            scale=scale, name="GT Centers", visible=False
-        )
-        self._gt_points_layer.editable = False
 
     def _setup_annotation_layers(self):
         if self._seg_combo.value is None or self._track_combo.value is None:
@@ -261,6 +242,7 @@ class TrackAnnotator(QWidget):
         vectors_style = "arrow"
         vectors_color = VECTOR_COLOR
         vectors_width = 0.3
+        vectors_scale = self._seg_combo.value.scale[1:]
         if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
             edge_focus_layer = self._viewer.layers[EDGE_FOCUS_VECTOR_NAME]
             edge_focus_layer.data = vectors_data
@@ -271,6 +253,7 @@ class TrackAnnotator(QWidget):
                 edge_width=vectors_width,
                 edge_color=vectors_color,
                 vector_style=vectors_style,
+                scale=vectors_scale,
             )
         self._viewer.layers.selection.active = point_focus_layer
         point_focus_layer.mode = "SELECT"
@@ -288,12 +271,16 @@ class TrackAnnotator(QWidget):
         return src_loc, tgt_loc
 
     def _display_points_layer(self, points_data, points_symbols, points_face_color):
+        self.points_layer_changed = False
+        # need to match the scale of the segmentation layer
+        current_scale = self._seg_combo.value.scale[1:]
         if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
             self._viewer.layers[EDGE_FOCUS_POINT_NAME].events.data.disconnect(
                 self._set_needs_saving
             )
             point_focus_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
             point_focus_layer.data = points_data
+            # point_focus_layer.scale = current_scale
             point_focus_layer.symbol = points_symbols
             point_focus_layer.face_color = points_face_color
 
@@ -301,9 +288,10 @@ class TrackAnnotator(QWidget):
             point_focus_layer = self._viewer.add_points(
                 points_data,
                 name=EDGE_FOCUS_POINT_NAME,
-                size=3,
+                size=2,
                 symbol=points_symbols,
                 face_color=points_face_color,
+                scale=current_scale,
             )
         point_focus_layer.events.data.connect(self._set_needs_saving)
         return point_focus_layer
@@ -313,12 +301,15 @@ class TrackAnnotator(QWidget):
             self.points_layer_changed = True
 
     def _display_edge(self, current_edge_idx):
+        current_scale = self._seg_combo.value.scale[1:]
         src_loc, tgt_loc = self._get_edge_locs(current_edge_idx)
         # get center of the region for zooming
         center = get_region_center(src_loc[1:], tgt_loc[1:])
         # bbox = self._get_region_bbox(src_loc, tgt_loc)
         self._add_current_edge_focus_point(src_loc, tgt_loc)
-        self._viewer.camera.center = center
+        self._viewer.camera.center = np.multiply(center, current_scale)
+        # TODO: should be dynamic based on data...
+        self._viewer.camera.zoom = 70
         self._viewer.dims.current_step = (src_loc[0], 0, 0)
 
     def _display_gt_edge(self, current_edge_idx):
@@ -326,6 +317,7 @@ class TrackAnnotator(QWidget):
             self._edge_sample_order[current_edge_idx]
         ]
         original_src_loc, original_tgt_loc = self._get_edge_locs(current_edge_idx)
+        current_scale = self._seg_combo.value.scale[1:]
         # there's a gt edge we can display here, let's do that
         if "gt_edge" in edge_info:
             gt_edge_idx = edge_info["gt_edge"]
@@ -333,7 +325,8 @@ class TrackAnnotator(QWidget):
             tgt_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[1]])
             center = get_region_center(src_loc[1:], tgt_loc[1:])
             self._add_current_edge_focus_point(src_loc, tgt_loc)
-            self._viewer.camera.center = center
+            self._viewer.camera.center = np.multiply(center, current_scale)
+            self._viewer.camera.zoom = 70
             self._viewer.dims.current_step = (src_loc[0], 0, 0)
         # there's no edge, but we may want to display some points, with no edge
         else:
@@ -360,7 +353,8 @@ class TrackAnnotator(QWidget):
             points_focus_layer = self._display_points_layer(
                 points_data, points_symbols, points_face_colors
             )
-            self._viewer.camera.center = camera_center
+            self._viewer.camera.center = np.multiply(camera_center, current_scale)
+            self._viewer.camera.zoom = 70
             self._viewer.dims.current_step = (current_step, 0, 0)
             self._viewer.layers.selection.active = points_focus_layer
             points_focus_layer.mode = "SELECT"
@@ -388,9 +382,7 @@ class TrackAnnotator(QWidget):
         self._previous_edge_button.enabled = self._current_display_idx > 0
 
     def _display_previous_edge(self):
-        edge_saved = self._save_edge_annotation()
-        if edge_saved:
-            self._current_display_idx -= 1
+        self._current_display_idx -= 1
         if (
             "seen"
             in self._get_original_nxg().edges[
