@@ -316,6 +316,9 @@ class TrackAnnotator(QWidget):
                 tgt_loc = points_layer.data[tgt_idx]
                 vectors_data = [[src_loc, tgt_loc - src_loc]]
                 self._viewer.layers[EDGE_FOCUS_VECTOR_NAME].data = vectors_data
+        if event.action == "removed":
+            if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
+                self._viewer.layers[EDGE_FOCUS_VECTOR_NAME].data = []
 
     def _display_edge(self, current_edge_idx):
         current_scale = self._seg_combo.value.scale[1:]
