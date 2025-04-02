@@ -1,9 +1,8 @@
 import warnings
-from collections import defaultdict
 
 import networkx as nx
 import numpy as np
-from magicgui.widgets import Container, PushButton, create_widget
+from magicgui.widgets import PushButton, create_widget
 from qtpy.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -13,8 +12,6 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-from tracktour._tracker import Tracker
 
 from ._graph_conversion_util import get_nxg_from_tracks
 
@@ -214,17 +211,21 @@ class TrackAnnotator(QWidget):
         if EDGE_FOCUS_POINT_NAME not in self._viewer.layers:
             return
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
-        current_step = event.value
         src_loc, tgt_loc = self._get_edge_locs()
         src_t = src_loc[0]
         tgt_t = tgt_loc[0]
+        current_step = event.value
+        current_symbols = points_layer.symbol
         current_t = current_step[0]
-        if current_t == src_t:
-            points_layer.face_color = [POINT_IN_FRAME_COLOR, POINT_OUT_FRAME_COLOR]
-        elif current_t == tgt_t:
-            points_layer.face_color = [POINT_OUT_FRAME_COLOR, POINT_IN_FRAME_COLOR]
-        else:
-            points_layer.face_color = [POINT_OUT_FRAME_COLOR, POINT_OUT_FRAME_COLOR]
+        face_colors = []
+        for symbol in current_symbols:
+            if symbol == "disc" and src_t == current_t:
+                face_colors.append(POINT_IN_FRAME_COLOR)
+            elif symbol == "ring" and tgt_t == current_t:
+                face_colors.append(POINT_IN_FRAME_COLOR)
+            else:
+                face_colors.append(POINT_OUT_FRAME_COLOR)
+        points_layer.face_color = face_colors
 
     def _add_current_edge_focus_point(self, src, tgt):
         # we drop the first dimension of the points, which is the frame
@@ -257,6 +258,11 @@ class TrackAnnotator(QWidget):
             )
         self._viewer.layers.selection.active = point_focus_layer
         point_focus_layer.mode = "SELECT"
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="Public access to Window.qt_viewer is deprecated"
+            )
+            self._viewer.window.qt_viewer.dims.setFocus()
 
     def _get_edge_locs(self, current_edge_idx=None):
         if current_edge_idx is None:
@@ -276,7 +282,7 @@ class TrackAnnotator(QWidget):
         current_scale = self._seg_combo.value.scale[1:]
         if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
             self._viewer.layers[EDGE_FOCUS_POINT_NAME].events.data.disconnect(
-                self._set_needs_saving
+                self._handle_points_change
             )
             point_focus_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
             point_focus_layer.data = points_data
@@ -293,12 +299,23 @@ class TrackAnnotator(QWidget):
                 face_color=points_face_color,
                 scale=current_scale,
             )
-        point_focus_layer.events.data.connect(self._set_needs_saving)
+        point_focus_layer.events.data.connect(self._handle_points_change)
         return point_focus_layer
 
-    def _set_needs_saving(self, event):
+    def _handle_points_change(self, event):
         if event.action == "changed" or event.action == "removed":
             self.points_layer_changed = True
+        points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
+        if event.action == "changed" and len(points_layer.data) == 2:
+            if EDGE_FOCUS_VECTOR_NAME not in self._viewer.layers:
+                return
+            # moved a point, need to update the vectors layer
+            src_idx, tgt_idx = get_src_tgt_idx(points_layer.symbol)
+            if src_idx is not None and tgt_idx is not None:
+                src_loc = points_layer.data[src_idx]
+                tgt_loc = points_layer.data[tgt_idx]
+                vectors_data = [[src_loc, tgt_loc - src_loc]]
+                self._viewer.layers[EDGE_FOCUS_VECTOR_NAME].data = vectors_data
 
     def _display_edge(self, current_edge_idx):
         current_scale = self._seg_combo.value.scale[1:]
@@ -358,6 +375,11 @@ class TrackAnnotator(QWidget):
             self._viewer.dims.current_step = (current_step, 0, 0)
             self._viewer.layers.selection.active = points_focus_layer
             points_focus_layer.mode = "SELECT"
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="Public access to Window.qt_viewer is deprecated"
+            )
+            self._viewer.window.qt_viewer.dims.setFocus()
 
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
@@ -509,15 +531,9 @@ class TrackAnnotator(QWidget):
             return False
         # points data is either 2 or 1
         if num_points == 2:
-            (src_idx,) = np.where(points_layer.symbol == "disc")
-            (tgt_idx,) = np.where(points_layer.symbol == "ring")
-            if len(src_idx) == 0 or len(tgt_idx) == 0:
-                warnings.warn(
-                    "Missing source disc or target ring. Did you change symbols? Resetting edge."
-                )
+            src_idx, tgt_idx = get_src_tgt_idx(points_layer.symbol)
+            if src_idx is None or tgt_idx is None:
                 return False
-            src_idx = int(src_idx[0])
-            tgt_idx = int(tgt_idx[0])
             point_one_loc = np.concatenate(
                 [[original_src_loc[0]], points_layer.data[src_idx]]
             )
@@ -752,3 +768,16 @@ def get_int_loc(loc):
     Get the integer location
     """
     return np.round(loc).astype(int)
+
+
+def get_src_tgt_idx(points_symbols):
+    (src_idx,) = np.where(points_symbols == "disc")
+    (tgt_idx,) = np.where(points_symbols == "ring")
+    if len(src_idx) == 0 or len(tgt_idx) == 0:
+        warnings.warn(
+            "Missing source disc or target ring. Did you change symbols? Resetting edge."
+        )
+        return None, None
+    src_idx = int(src_idx[0])
+    tgt_idx = int(tgt_idx[0])
+    return src_idx, tgt_idx
