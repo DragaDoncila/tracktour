@@ -354,14 +354,14 @@ class TrackAnnotator(QWidget):
                 original_src_loc[1:], original_tgt_loc[1:]
             )
             if edge_info["src_loc"] is not None:
-                src_loc = np.concatenate([[edge_info["t"]], edge_info["src_loc"]])
+                src_loc = np.concatenate([[original_src_loc[0]], edge_info["src_loc"]])
                 points_data.append(src_loc[1:])
                 points_symbols.append("disc")
                 points_face_colors.append(POINT_IN_FRAME_COLOR)
                 camera_center = src_loc[1:]
                 current_step = src_loc[0]
             if edge_info["tgt_loc"] is not None:
-                tgt_loc = np.concatenate([[edge_info["t"]], edge_info["tgt_loc"]])
+                tgt_loc = np.concatenate([[original_tgt_loc[0]], edge_info["tgt_loc"]])
                 points_data.append(tgt_loc[1:])
                 points_symbols.append("ring")
                 points_face_colors.append(POINT_OUT_FRAME_COLOR)
@@ -375,6 +375,9 @@ class TrackAnnotator(QWidget):
             self._viewer.dims.current_step = (current_step, 0, 0)
             self._viewer.layers.selection.active = points_focus_layer
             points_focus_layer.mode = "SELECT"
+            # if there was a vector, we need to clear its data because there's no vector
+            if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
+                self._viewer.layers[EDGE_FOCUS_VECTOR_NAME].data = []
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore", message="Public access to Window.qt_viewer is deprecated"
