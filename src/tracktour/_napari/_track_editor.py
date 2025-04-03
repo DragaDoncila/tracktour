@@ -268,6 +268,7 @@ class TrackAnnotator(QWidget):
                 scale=vectors_scale,
             )
         self._viewer.layers.selection.active = point_focus_layer
+        point_focus_layer.selected_data.clear()
         point_focus_layer.mode = "SELECT"
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -389,6 +390,7 @@ class TrackAnnotator(QWidget):
             self._viewer.camera.zoom = 70
             self._viewer.dims.current_step = (current_step, 0, 0)
             self._viewer.layers.selection.active = points_focus_layer
+            points_focus_layer.selected_data.clear()
             points_focus_layer.mode = "SELECT"
             # if there was a vector, we need to clear its data because there's no vector
             if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
@@ -411,7 +413,6 @@ class TrackAnnotator(QWidget):
             ]
         ):
             self._display_gt_edge(self._current_display_idx)
-            # need to reset the counts we've updated?
         else:
             self._display_edge(self._current_display_idx)
 
@@ -737,7 +738,15 @@ class TrackAnnotator(QWidget):
         )
 
     def _reset_current_edge(self):
-        self._check_valid_layers()
+        if (
+            "seen"
+            in self._get_original_nxg().edges[
+                self._edge_sample_order[self._current_display_idx]
+            ]
+        ):
+            self._display_gt_edge(self._current_display_idx)
+        else:
+            self._display_edge(self._current_display_idx)
 
 
 def get_region_center(loc1, loc2):
