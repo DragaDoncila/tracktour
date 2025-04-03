@@ -3,6 +3,7 @@ import warnings
 import networkx as nx
 import numpy as np
 from magicgui.widgets import PushButton, create_widget
+from napari.utils.notifications import show_info
 from qtpy.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -543,11 +544,11 @@ class TrackAnnotator(QWidget):
         num_points = len(points_layer.data)
         # check if the state of the points layer is valid
         if num_points > 2:
-            warnings.warn("More than two points in the current edge. Resetting edge.")
+            show_info("More than two points in the current edge. Resetting edge.")
             return False
         # TODO: is this actually ok?
         if num_points == 0:
-            warnings.warn("No points in the current edge. Resetting edge.")
+            show_info("No points in the current edge. Resetting edge.")
             return False
         # points data is either 2 or 1
         if num_points == 2:
@@ -568,14 +569,14 @@ class TrackAnnotator(QWidget):
             )
             # if both points have changed, we need to warn
             if point_one_moved and point_two_moved:
-                warnings.warn("Both points have changed. Resetting edge.")
+                show_info("Both points have changed. Resetting edge.")
                 return False
             if not point_one_moved and not point_two_moved:
                 has_two_original_points = True
         # single point in the data
         else:
             if points_layer.symbol[0] != "disc" and points_layer.symbol[0] != "ring":
-                warnings.warn(
+                show_info(
                     "Remaining point is neither source nor target. Did you change symbols? Resetting edge."
                 )
                 return False
@@ -802,7 +803,7 @@ def get_src_tgt_idx(points_symbols):
     (src_idx,) = np.where(points_symbols == "disc")
     (tgt_idx,) = np.where(points_symbols == "ring")
     if len(src_idx) == 0 or len(tgt_idx) == 0:
-        warnings.warn(
+        show_info(
             "Missing source disc or target ring. Did you change symbols? Resetting edge."
         )
         return None, None
