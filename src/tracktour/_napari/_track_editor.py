@@ -113,6 +113,15 @@ class TrackAnnotator(QWidget):
         self._reset_edge_button = PushButton(text="Reset Current Edge")
         self._next_edge_button = PushButton(text="Save && Next")
 
+        self._edge_status_layout = QHBoxLayout()
+        self._edge_status_layout.addWidget(QLabel("Edge Status: "))
+
+        self._edge_status_label = QLabel("New")
+        self._edge_status_layout.addWidget(self._edge_status_label)
+        self._reset_to_original_button = PushButton(text="Reset to Original")
+        self._reset_to_original_button.enabled = False
+        self._edge_status_layout.addWidget(self._reset_to_original_button.native)
+
         self._edge_control_layout.addWidget(self._previous_edge_button.native)
         self._edge_control_layout.addWidget(self._reset_edge_button.native)
         self._edge_control_layout.addWidget(self._next_edge_button.native)
@@ -137,6 +146,8 @@ class TrackAnnotator(QWidget):
         self.base_layout.addWidget(self._track_combo.native)
         self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._edge_control_layout)
+        self.base_layout.addWidget(get_separator_widget())
+        self.base_layout.addLayout(self._edge_status_layout)
         self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._counts_grid_layout)
         self.setLayout(self.base_layout)
@@ -331,6 +342,7 @@ class TrackAnnotator(QWidget):
         # TODO: should be dynamic based on data...
         self._viewer.camera.zoom = 70
         self._viewer.dims.current_step = (src_loc[0], 0, 0)
+        self._edge_status_label.setText("New")
 
     def _display_gt_edge(self, current_edge_idx):
         edge_info = self._get_original_nxg().edges[
@@ -386,6 +398,7 @@ class TrackAnnotator(QWidget):
                 "ignore", message="Public access to Window.qt_viewer is deprecated"
             )
             self._viewer.window.qt_viewer.dims.setFocus()
+        self._edge_status_label.setText("Seen")
 
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
@@ -433,7 +446,7 @@ class TrackAnnotator(QWidget):
         """
         Get new index for node, or index of existing node if it exists.
         """
-        new_idx = len(self._gt_nxg.nodes)
+        new_idx = max(self._gt_nxg.nodes) + 1 if len(self._gt_nxg.nodes) else 0
         # if it was an FN node, we don't want to use its original index
         if node_attrs.get(FN_NODE_ATTR, False):
             # TODO: need to check here if this FN node hasn't already been added...
