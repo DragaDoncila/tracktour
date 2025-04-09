@@ -121,6 +121,7 @@ class TrackAnnotator(QWidget):
         self._edge_status_layout.addWidget(self._edge_status_label)
         self._reset_to_original_button = PushButton(text="Reset to Original")
         self._reset_to_original_button.enabled = False
+        self._reset_to_original_button.clicked.connect(self._reset_to_original_edge)
         self._edge_status_layout.addWidget(self._reset_to_original_button.native)
 
         self._edge_control_layout.addWidget(self._previous_edge_button.native)
@@ -345,6 +346,7 @@ class TrackAnnotator(QWidget):
         self._viewer.camera.zoom = 70
         self._viewer.dims.current_step = (src_loc[0], 0, 0)
         self._edge_status_label.setText("New")
+        self._reset_to_original_button.enabled = False
 
     def _display_gt_edge(self, current_edge_idx):
         edge_info = self._get_original_nxg().edges[
@@ -408,6 +410,7 @@ class TrackAnnotator(QWidget):
             )
             self._viewer.window.qt_viewer.dims.setFocus()
         self._edge_status_label.setText(edge_label)
+        self._reset_to_original_button.enabled = edge_label == "Edited"
 
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
@@ -718,6 +721,7 @@ class TrackAnnotator(QWidget):
                         to_remove_sol.add(self._gt_nxg.nodes[node]["orig_idx"])
             self._gt_nxg.remove_nodes_from(to_remove_gt)
             self._tp_objects.difference_update(to_remove_sol)
+        self._update_label_displays()
 
         if len(prior_actions["added_to_fpo"]):
             for prior_fp_node in prior_actions["added_to_fpo"]:
@@ -754,6 +758,15 @@ class TrackAnnotator(QWidget):
             self._display_gt_edge(self._current_display_idx)
         else:
             self._display_edge(self._current_display_idx)
+
+    def _reset_to_original_edge(self):
+        original_edge = self._edge_sample_order[self._current_display_idx]
+        original_edge = (int(original_edge[0]), int(original_edge[1]))
+        self._get_original_nxg().edges[original_edge].pop("seen", None)
+        self._undo_edge_actions(original_edge)
+        self._display_edge(self._current_display_idx)
+        self._reset_to_original_button.enabled = False
+        self._edge_status_label.setText("New")
 
 
 def get_region_center(loc1, loc2):
