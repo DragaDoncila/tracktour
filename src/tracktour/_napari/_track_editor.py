@@ -514,66 +514,53 @@ class TrackAnnotator(QWidget):
                 return node
         raise ValueError(f"No node found with frame {frame} and label {label}")
 
-    def get_gt_node_attrs(self, src_points_idx, tgt_points_idx):
+    def get_gt_node_attrs(self, node_points_idx):
         nxg = self._get_original_nxg()
-        gt_src_attrs = {}
-        gt_tgt_attrs = {}
+        gt_node_attrs = {}
 
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
         original_src_loc, original_tgt_loc = self._get_edge_locs()
+        original_loc = (
+            original_src_loc
+            if points_layer.symbol[node_points_idx] == "disc"
+            else original_tgt_loc
+        )
 
-        annotated_src_loc = points_layer.data[src_points_idx]
-        annotated_tgt_loc = points_layer.data[tgt_points_idx]
-        annotated_src_loc = np.concatenate([[original_src_loc[0]], annotated_src_loc])
-        annotated_tgt_loc = np.concatenate([[original_tgt_loc[0]], annotated_tgt_loc])
+        annotated_loc = points_layer.data[node_points_idx]
+        annotated_loc = np.concatenate([[original_loc[0]], annotated_loc])
 
         # check if either of the points are over blank space
-        annotated_src_idx = get_int_loc(annotated_src_loc)
-        annotated_tgt_idx = get_int_loc(annotated_tgt_loc)
+        annotated_point_seg_idx = get_int_loc(annotated_loc)
         seg_layer = self._seg_combo.value
-        src_label = seg_layer.data[tuple(annotated_src_idx)]
-        tgt_label = seg_layer.data[tuple(annotated_tgt_idx)]
-        if src_label == 0:
+        annotated_label = seg_layer.data[tuple(annotated_point_seg_idx)]
+        if annotated_label == 0:
             # source was a previous FN
-            gt_src_attrs[FN_NODE_ATTR] = True
-            # mark the tgt TP
-            gt_tgt_attrs[TP_NODE_VOTES] = 1
+            gt_node_attrs[FN_NODE_ATTR] = True
             # give src a non-existent original index
-            gt_src_attrs["orig_idx"] = -1
+            gt_node_attrs["orig_idx"] = -1
             # give src the location of the "added" point
-            gt_src_attrs.update(split_coords(annotated_src_loc))
-            # give tgt the location and index of the original point
-            tgt_frame = annotated_tgt_idx[0]
-            orig_tgt_idx = self._get_original_matching_node(tgt_frame, tgt_label)
-            gt_tgt_attrs["orig_idx"] = orig_tgt_idx
-            gt_tgt_attrs.update(get_loc_dict(nxg.nodes[orig_tgt_idx]))
-        elif tgt_label == 0:
-            # target was a previous FN
-            gt_tgt_attrs[FN_NODE_ATTR] = True
-            # mark the src TP
-            gt_src_attrs[TP_NODE_VOTES] = 1
-            # give tgt a non-existent original index
-            gt_tgt_attrs["orig_idx"] = -1
-            # give tgt the location of the "added" point
-            gt_tgt_attrs.update(split_coords(annotated_tgt_loc))
-            # give src the location and index of the original point
-            src_frame = annotated_src_idx[0]
-            orig_src_idx = self._get_original_matching_node(src_frame, src_label)
-            gt_src_attrs["orig_idx"] = orig_src_idx
-            gt_src_attrs.update(get_loc_dict(nxg.nodes[orig_src_idx]))
+            gt_node_attrs.update(split_coords(annotated_loc))
         else:
-            # both nodes already existed and still do, so they are TP
-            gt_src_attrs[TP_NODE_VOTES] = 1
-            gt_tgt_attrs[TP_NODE_VOTES] = 1
-            src_frame = annotated_src_idx[0]
-            orig_src_idx = self._get_original_matching_node(src_frame, src_label)
-            tgt_frame = annotated_tgt_idx[0]
-            orig_tgt_idx = self._get_original_matching_node(tgt_frame, tgt_label)
-            gt_src_attrs["orig_idx"] = orig_src_idx
-            gt_tgt_attrs["orig_idx"] = orig_tgt_idx
-            gt_src_attrs.update(get_loc_dict(nxg.nodes[orig_src_idx]))
-            gt_tgt_attrs.update(get_loc_dict(nxg.nodes[orig_tgt_idx]))
-        return gt_src_attrs, gt_tgt_attrs
+            # mark the src TP
+            gt_node_attrs[TP_NODE_VOTES] = 1
+            # give src the location and index of the original point
+            node_frame = annotated_point_seg_idx[0]
+            orig_node_index = self._get_original_matching_node(
+                node_frame, annotated_label
+            )
+            gt_node_attrs["orig_idx"] = orig_node_index
+            gt_node_attrs.update(get_loc_dict(nxg.nodes[orig_node_index]))
+
+        return gt_node_attrs
+
+    def _add_node_with_attrs(self, node_attrs):
+        node_index = self.get_new_node_index(node_attrs)
+        if node_index in self._gt_nxg.nodes and TP_NODE_VOTES in node_attrs:
+            node_attrs[TP_NODE_VOTES] = (
+                self._gt_nxg.nodes[node_index][TP_NODE_VOTES] + 1
+            )
+        self._gt_nxg.add_nodes_from([(node_index, node_attrs)])
+        return node_index
 
     def _save_edge_annotation(self):
         seg = self._seg_combo.value.data
@@ -625,6 +612,23 @@ class TrackAnnotator(QWidget):
                     "Remaining point is neither source nor target. Did you change symbols? Resetting edge."
                 )
                 return False
+            if points_layer.symbol[0] == "disc":
+                full_point_loc = np.concatenate(
+                    [[original_src_loc[0]], points_layer.data[0]]
+                )
+                point_moved = (
+                    seg[tuple(get_int_loc(full_point_loc))] != original_src_label
+                )
+            else:
+                full_point_loc = np.concatenate(
+                    [[original_tgt_loc[0]], points_layer.data[0]]
+                )
+                point_moved = (
+                    seg[tuple(get_int_loc(full_point_loc))] != original_tgt_label
+                )
+            if point_moved:
+                show_info("Both points have changed. Resetting edge.")
+                return False
 
         # points layer didn't change and we've seen it before, nothing to do
         if (not self._points_layer_changed) and "seen" in nxg.edges[original_edge]:
@@ -659,20 +663,11 @@ class TrackAnnotator(QWidget):
                 self._fp_edges.add(original_edge)
                 actions["added_to_fpe"].append(original_edge)
             # add the GT edge
-            gt_src_attrs, gt_tgt_attrs = self.get_gt_node_attrs(src_idx, tgt_idx)
+            gt_src_attrs = self.get_gt_node_attrs(src_idx)
+            gt_tgt_attrs = self.get_gt_node_attrs(tgt_idx)
             # add nodes with new indices, add edge
-            src_index = self.get_new_node_index(gt_src_attrs)
-            if src_index in self._gt_nxg.nodes and TP_NODE_VOTES in gt_src_attrs:
-                gt_src_attrs[TP_NODE_VOTES] = (
-                    self._gt_nxg.nodes[src_index][TP_NODE_VOTES] + 1
-                )
-            self._gt_nxg.add_nodes_from([(src_index, gt_src_attrs)])
-            tgt_index = self.get_new_node_index(gt_tgt_attrs)
-            if tgt_index in self._gt_nxg.nodes and TP_NODE_VOTES in gt_tgt_attrs:
-                gt_tgt_attrs[TP_NODE_VOTES] = (
-                    self._gt_nxg.nodes[tgt_index][TP_NODE_VOTES] + 1
-                )
-            self._gt_nxg.add_nodes_from([(tgt_index, gt_tgt_attrs)])
+            src_index = self._add_node_with_attrs(gt_src_attrs)
+            tgt_index = self._add_node_with_attrs(gt_tgt_attrs)
             self._gt_nxg.add_edge(src_index, tgt_index, **gt_edge_attr)
             if FN_NODE_ATTR in gt_src_attrs:
                 self._fn_objects.add(src_index)
@@ -694,7 +689,6 @@ class TrackAnnotator(QWidget):
             nxg.edges[original_edge]["gt_tgt"] = tgt_index
         elif num_points == 1:
             # this is an FP edge and we only have a single point left
-            # TODO: should we update TP votes?
             nxg.edges[original_edge][FP_EDGE_ATTR] = True
             self._fp_edges.add(original_edge)
             actions["added_to_fpe"].append(original_edge)
@@ -707,6 +701,13 @@ class TrackAnnotator(QWidget):
                     nxg.edges[original_edge]["src_present"] = True
                 else:
                     nxg.edges[original_edge]["tgt_present"] = True
+                # add node to GT with increased vote
+                gt_node_attrs = self.get_gt_node_attrs(0)
+                # we've already checked the remaining point hasn't moved, so we can just add here
+                # as TP
+                self._add_node_with_attrs(gt_node_attrs)
+                self._tp_objects.add(gt_node_attrs["orig_idx"])
+                actions["added_to_tpo"].append(gt_node_attrs["orig_idx"])
 
         # mark this edge as seen
         self._edge_actions[original_edge] = actions
