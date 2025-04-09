@@ -1,8 +1,10 @@
+import glob
+import os
 import warnings
 
 import networkx as nx
 import numpy as np
-from magicgui.widgets import PushButton, create_widget
+from magicgui.widgets import FileEdit, PushButton, create_widget
 from napari.utils.notifications import show_info
 from qtpy.QtWidgets import (
     QFrame,
@@ -14,10 +16,12 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from ._graph_conversion_util import get_nxg_from_tracks
+from ._graph_conversion_util import get_nxg_from_tracks, get_tracks_from_nxg
 
 EDGE_FOCUS_POINT_NAME = "Source Target"
 EDGE_FOCUS_VECTOR_NAME = "Current Edge"
+GT_TRACKS_NAME = "Ground Truth Tracks"
+
 POINT_IN_FRAME_COLOR = [0.816, 0.337, 0.933, 1]
 POINT_OUT_FRAME_COLOR = [0.816, 0.337, 0.933, 0.3]
 VECTOR_COLOR = [1, 1, 1, 1]
@@ -29,6 +33,9 @@ TP_EDGE_ATTR = "tracktour_annotated_tp"
 FP_NODE_ATTR = "tracktour_annotated_fp"
 FN_NODE_ATTR = "tracktour_annotated_fn"
 TP_NODE_VOTES = "tracktour_annotated_tp_votes"
+
+OUT_GT_GRAPH_NAME = "tracktour_gt_graph"
+OUT_SOL_GRAPH_NAME = "tracktour_original_graph"
 
 
 def get_separator_widget():
@@ -84,51 +91,16 @@ class TrackAnnotator(QWidget):
         viewer: "napari.viewer.Viewer",
     ) -> None:
         super().__init__()
+
+        # initialize bits and pieces for tracking state
         self._viewer = viewer
         self._edge_sample_order = None
         self._original_nxg = None
         self._current_display_idx = 0
 
-        self._gt_seg_layer = None
-        self._gt_points_layer = None
-        self._gt_tracks_layer = None
         self._gt_nxg = None
+        self._points_layer_changed = False
 
-        self.points_layer_changed = False
-
-        self._seg_combo = create_widget(
-            annotation="napari.layers.Labels", label="Segmentation"
-        )
-        self._track_combo = create_widget(
-            annotation="napari.layers.Tracks", label="Tracks"
-        )
-        self._seg_combo.changed.connect(self._setup_annotation_layers)
-        self._track_combo.changed.connect(self._setup_annotation_layers)
-
-        self.base_layout = QVBoxLayout()
-
-        self._edge_control_layout = QHBoxLayout()
-        self._previous_edge_button = PushButton(text="Previous")
-        self._previous_edge_button.enabled = False
-
-        self._reset_edge_button = PushButton(text="Reset Current Edge")
-        self._next_edge_button = PushButton(text="Save && Next")
-
-        self._edge_status_layout = QHBoxLayout()
-        self._edge_status_layout.addWidget(QLabel("Edge Status: "))
-
-        self._edge_status_label = QLabel("New")
-        self._edge_status_layout.addWidget(self._edge_status_label)
-        self._reset_to_original_button = PushButton(text="Reset to Original")
-        self._reset_to_original_button.enabled = False
-        self._reset_to_original_button.clicked.connect(self._reset_to_original_edge)
-        self._edge_status_layout.addWidget(self._reset_to_original_button.native)
-
-        self._edge_control_layout.addWidget(self._previous_edge_button.native)
-        self._edge_control_layout.addWidget(self._reset_edge_button.native)
-        self._edge_control_layout.addWidget(self._next_edge_button.native)
-
-        self._counts_grid_layout = get_counts_grid_layout()
         # IDs into original nxg
         self._tp_objects: set[int] = set()
         self._fp_objects: set[int] = set()
@@ -144,6 +116,64 @@ class TrackAnnotator(QWidget):
             tuple[int, int], dict[str, int | tuple[int, int]]
         ] = dict()
 
+        # layer selection widgets
+        self._seg_combo = create_widget(
+            annotation="napari.layers.Labels", label="Segmentation"
+        )
+        self._track_combo = create_widget(
+            annotation="napari.layers.Tracks", label="Tracks"
+        )
+        self._seg_combo.changed.connect(self._setup_annotation_layers)
+        self._track_combo.changed.connect(self._setup_annotation_layers)
+
+        # widgets for navigating edges
+        self.base_layout = QVBoxLayout()
+
+        self._edge_control_layout = QHBoxLayout()
+        self._previous_edge_button = PushButton(text="Previous")
+        self._previous_edge_button.enabled = False
+
+        self._reset_edge_button = PushButton(text="Reset Current Edge")
+        self._next_edge_button = PushButton(text="Save && Next")
+
+        self._next_edge_button.clicked.connect(self._display_next_edge)
+        self._previous_edge_button.clicked.connect(self._display_previous_edge)
+        self._reset_edge_button.clicked.connect(self._reset_current_edge)
+
+        self._edge_control_layout.addWidget(self._previous_edge_button.native)
+        self._edge_control_layout.addWidget(self._reset_edge_button.native)
+        self._edge_control_layout.addWidget(self._next_edge_button.native)
+
+        # widgets for current edge status and reset button
+        self._edge_status_layout = QHBoxLayout()
+        self._edge_status_layout.addWidget(QLabel("Edge Status: "))
+
+        self._edge_status_label = QLabel("New")
+        self._edge_status_layout.addWidget(self._edge_status_label)
+        self._reset_to_original_button = PushButton(text="Reset to Original")
+        self._reset_to_original_button.enabled = False
+        self._reset_to_original_button.clicked.connect(self._reset_to_original_edge)
+        self._edge_status_layout.addWidget(self._reset_to_original_button.native)
+
+        # widgets for counts
+        self._counts_grid_layout = get_counts_grid_layout()
+
+        # widgets for export
+        self._view_ground_truth_button = PushButton(text="View Ground Truth")
+
+        self._export_layout = QHBoxLayout()
+        self._export_path = FileEdit(
+            mode="d", filter="*.tracktour", label="Export Path"
+        )
+        self._save_annotations_button = PushButton(text="Save Annotations")
+        self._save_annotations_button.clicked.connect(self._save_annotated_graphs)
+        self._save_project_button = PushButton(text="Save Project")
+        self._view_ground_truth_button.clicked.connect(self._add_ground_truth_tracks)
+
+        self._export_layout.addWidget(self._save_annotations_button.native)
+        self._export_layout.addWidget(self._save_project_button.native)
+
+        # add everything to the layout
         self.base_layout.addWidget(self._seg_combo.native)
         self.base_layout.addWidget(self._track_combo.native)
         self.base_layout.addWidget(get_separator_widget())
@@ -152,11 +182,11 @@ class TrackAnnotator(QWidget):
         self.base_layout.addLayout(self._edge_status_layout)
         self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._counts_grid_layout)
+        self.base_layout.addWidget(self._view_ground_truth_button.native)
+        self.base_layout.addWidget(get_separator_widget())
+        self.base_layout.addWidget(self._export_path.native)
+        self.base_layout.addLayout(self._export_layout)
         self.setLayout(self.base_layout)
-
-        self._next_edge_button.clicked.connect(self._display_next_edge)
-        self._previous_edge_button.clicked.connect(self._display_previous_edge)
-        self._reset_edge_button.clicked.connect(self._reset_current_edge)
 
         self._setup_annotation_layers()
 
@@ -191,10 +221,14 @@ class TrackAnnotator(QWidget):
             raise ValueError("No tracks layer selected")
 
     def _get_original_nxg(self):
+        if self._original_nxg is not None:
+            return self._original_nxg
         tracks_layer = self._track_combo.value
         if "nxg" in tracks_layer.metadata:
+            self._original_nxg = tracks_layer.metadata["nxg"]
             return tracks_layer.metadata["nxg"]
         nxg = get_nxg_from_tracks(tracks_layer)
+        self._original_nxg = nxg
         return nxg
 
     def _get_region_bbox(self, loc1, loc2):
@@ -291,7 +325,7 @@ class TrackAnnotator(QWidget):
         return src_loc, tgt_loc
 
     def _display_points_layer(self, points_data, points_symbols, points_face_color):
-        self.points_layer_changed = False
+        self._points_layer_changed = False
         # need to match the scale of the segmentation layer
         current_scale = self._seg_combo.value.scale[1:]
         if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
@@ -318,7 +352,7 @@ class TrackAnnotator(QWidget):
 
     def _handle_points_change(self, event):
         if event.action == "changed" or event.action == "removed":
-            self.points_layer_changed = True
+            self._points_layer_changed = True
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
         if event.action == "changed" and len(points_layer.data) == 2:
             if EDGE_FOCUS_VECTOR_NAME not in self._viewer.layers:
@@ -356,8 +390,8 @@ class TrackAnnotator(QWidget):
         current_scale = self._seg_combo.value.scale[1:]
         edge_label = "Seen"
         # there's a gt edge we can display here, let's do that
-        if "gt_edge" in edge_info:
-            gt_edge_idx = edge_info["gt_edge"]
+        if "gt_src" in edge_info and "gt_tgt" in edge_info:
+            gt_edge_idx = (edge_info["gt_src"], edge_info["gt_tgt"])
             src_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[0]])
             tgt_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[1]])
             if not np.allclose(src_loc, original_src_loc) or not np.allclose(
@@ -378,20 +412,18 @@ class TrackAnnotator(QWidget):
             camera_center = get_region_center(
                 original_src_loc[1:], original_tgt_loc[1:]
             )
-            if edge_info["src_loc"] is not None:
-                src_loc = np.concatenate([[original_src_loc[0]], edge_info["src_loc"]])
-                points_data.append(src_loc[1:])
+            if edge_info["src_present"]:
+                points_data.append(original_src_loc[1:])
                 points_symbols.append("disc")
                 points_face_colors.append(POINT_IN_FRAME_COLOR)
-                camera_center = src_loc[1:]
-                current_step = src_loc[0]
-            if edge_info["tgt_loc"] is not None:
-                tgt_loc = np.concatenate([[original_tgt_loc[0]], edge_info["tgt_loc"]])
-                points_data.append(tgt_loc[1:])
+                camera_center = original_src_loc[1:]
+                current_step = original_src_loc[0]
+            if edge_info["tgt_present"]:
+                points_data.append(original_tgt_loc[1:])
                 points_symbols.append("ring")
                 points_face_colors.append(POINT_OUT_FRAME_COLOR)
-                camera_center = tgt_loc[1:]
-                current_step = tgt_loc[0]
+                camera_center = original_tgt_loc[1:]
+                current_step = original_tgt_loc[0]
             points_focus_layer = self._display_points_layer(
                 points_data, points_symbols, points_face_colors
             )
@@ -591,11 +623,11 @@ class TrackAnnotator(QWidget):
                 return False
 
         # points layer didn't change and we've seen it before, nothing to do
-        if (not self.points_layer_changed) and "seen" in nxg.edges[original_edge]:
+        if (not self._points_layer_changed) and "seen" in nxg.edges[original_edge]:
             print("No changes on seen edge")
             return True
         # if we've seen the edge before and there's been changes, we need to undo
-        if "seen" in nxg.edges[original_edge] and self.points_layer_changed:
+        if "seen" in nxg.edges[original_edge] and self._points_layer_changed:
             print("undoing edge actions")
             self._undo_edge_actions(original_edge)
 
@@ -654,7 +686,8 @@ class TrackAnnotator(QWidget):
                 self._fn_edges.add((src_index, tgt_index))
                 actions["added_to_fne"].append((src_index, tgt_index))
             # update the original nxg with the GT edge index
-            nxg.edges[original_edge]["gt_edge"] = (src_index, tgt_index)
+            nxg.edges[original_edge]["gt_src"] = src_index
+            nxg.edges[original_edge]["gt_tgt"] = tgt_index
         elif num_points == 1:
             # this is an FP edge and we only have a single point left
             # TODO: should we update TP votes?
@@ -662,20 +695,20 @@ class TrackAnnotator(QWidget):
             self._fp_edges.add(original_edge)
             actions["added_to_fpe"].append(original_edge)
             # need to be able to restore this point/lack of points if we come back to this
-            # edge, so store src and tgt loc in the edge data
-            nxg.edges[original_edge]["src_loc"] = None
-            nxg.edges[original_edge]["tgt_loc"] = None
+            # edge, so store whether the source or the target remains
+            nxg.edges[original_edge]["src_present"] = False
+            nxg.edges[original_edge]["tgt_present"] = False
             if len(points_layer.data) == 1:
                 if points_layer.symbol[0] == "disc":
-                    nxg.edges[original_edge]["src_loc"] = points_layer.data[0]
+                    nxg.edges[original_edge]["src_present"] = True
                 else:
-                    nxg.edges[original_edge]["tgt_loc"] = points_layer.data[0]
+                    nxg.edges[original_edge]["tgt_present"] = True
 
         # mark this edge as seen
         self._edge_actions[original_edge] = actions
         self._update_label_displays()
         nxg.edges[original_edge]["seen"] = True
-        self.points_layer_changed = False
+        self._points_layer_changed = False
         return True
 
     def _undo_edge_actions(self, edge):
@@ -685,9 +718,10 @@ class TrackAnnotator(QWidget):
             for prior_fp_edge in prior_actions["added_to_fpe"]:
                 self._fp_edges.remove(prior_fp_edge)
                 nxg.edges[prior_fp_edge].pop(FP_EDGE_ATTR, None)
-                nxg.edges[prior_fp_edge].pop("gt_edge", None)
-                nxg.edges[prior_fp_edge].pop("src_loc", None)
-                nxg.edges[prior_fp_edge].pop("tgt_loc", None)
+                nxg.edges[prior_fp_edge].pop("gt_src", None)
+                nxg.edges[prior_fp_edge].pop("gt_tgt", None)
+                nxg.edges[prior_fp_edge].pop("src_present", None)
+                nxg.edges[prior_fp_edge].pop("tgt_present", None)
         if len(prior_actions["added_to_fne"]):
             for prior_fn_edge in prior_actions["added_to_fne"]:
                 self._fn_edges.remove(prior_fn_edge)
@@ -696,9 +730,10 @@ class TrackAnnotator(QWidget):
             for prior_tp_edge in prior_actions["added_to_tpe"]:
                 self._tp_edges.remove(prior_tp_edge)
                 nxg.edges[prior_tp_edge].pop(TP_EDGE_ATTR, None)
-                gt_e = nxg.edges[prior_tp_edge].pop("gt_edge", None)
-                if gt_e is not None:
-                    self._gt_nxg.remove_edge(*gt_e)
+                gt_src = nxg.edges[prior_tp_edge].pop("gt_src", None)
+                gt_tgt = nxg.edges[prior_tp_edge].pop("gt_tgt", None)
+                if gt_src is not None and gt_tgt is not None:
+                    self._gt_nxg.remove_edge(gt_src, gt_tgt)
         if len(prior_actions["added_to_fno"]):
             for prior_fn_node in prior_actions["added_to_fno"]:
                 self._fn_objects.remove(prior_fn_node)
@@ -767,6 +802,56 @@ class TrackAnnotator(QWidget):
         self._display_edge(self._current_display_idx)
         self._reset_to_original_button.enabled = False
         self._edge_status_label.setText("New")
+
+    def _add_ground_truth_tracks(self):
+        if (
+            self._gt_nxg is None
+            or len(self._gt_nxg.nodes) == 0
+            or len(self._gt_nxg.edges) == 0
+        ):
+            show_info("No ground truth tracks to display. Try annotating some edges!")
+            return
+        seg_layer_scale = self._seg_combo.value.scale
+        tracks = get_tracks_from_nxg(self._gt_nxg)
+        tracks.name = GT_TRACKS_NAME
+        tracks.scale = seg_layer_scale
+        if GT_TRACKS_NAME in self._viewer.layers:
+            gt_tracks_layer = self._viewer.layers[GT_TRACKS_NAME]
+            gt_tracks_layer.data = tracks.data
+            gt_tracks_layer.graph = tracks.graph
+            gt_tracks_layer.scale = seg_layer_scale
+        else:
+            self._viewer.add_layer(tracks)
+
+    def _save_annotated_graphs(self):
+        dir_path = self._export_path.value
+        if (
+            self._gt_nxg is None
+            or len(self._gt_nxg.nodes) == 0
+            or len(self._gt_nxg.edges) == 0
+        ):
+            show_info("Nothing so save. Try annotating some edges!")
+            return
+        gt_path = os.path.join(dir_path, f"{OUT_GT_GRAPH_NAME}.graphml")
+        sol_path = os.path.join(dir_path, f"{OUT_SOL_GRAPH_NAME}.graphml")
+        if os.path.exists(gt_path):
+            show_info("Ground truth graph already exists. Saving new graph.")
+            already_saved = glob.glob(
+                os.path.join(dir_path, f"{OUT_GT_GRAPH_NAME}*.graphml")
+            )
+            num_saved = len(already_saved)
+            gt_path = os.path.join(dir_path, f"{OUT_GT_GRAPH_NAME}_{num_saved}.graphml")
+            sol_path = os.path.join(
+                dir_path, f"{OUT_SOL_GRAPH_NAME}_{num_saved}.graphml"
+            )
+        # delete and then restore color_array to avoid error in saving
+        sol_nxg = self._get_original_nxg()
+        colors = {node: sol_nxg.nodes[node].pop("color") for node in sol_nxg.nodes}
+
+        nx.write_graphml(self._gt_nxg, gt_path)
+        nx.write_graphml(self._get_original_nxg(), sol_path)
+        nx.set_node_attributes(sol_nxg, colors, "color")
+        print("Saved")
 
 
 def get_region_center(loc1, loc2):
