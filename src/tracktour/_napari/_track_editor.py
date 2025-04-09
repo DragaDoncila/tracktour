@@ -276,7 +276,8 @@ class TrackAnnotator(QWidget):
                 face_colors.append(POINT_IN_FRAME_COLOR)
             else:
                 face_colors.append(POINT_OUT_FRAME_COLOR)
-        points_layer.face_color = face_colors
+        if len(face_colors):
+            points_layer.face_color = face_colors
 
     def _add_current_edge_focus_point(self, src, tgt):
         # we drop the first dimension of the points, which is the frame
@@ -339,8 +340,9 @@ class TrackAnnotator(QWidget):
             point_focus_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
             point_focus_layer.data = points_data
             # point_focus_layer.scale = current_scale
-            point_focus_layer.symbol = points_symbols
-            point_focus_layer.face_color = points_face_color
+            if len(points_data):
+                point_focus_layer.symbol = points_symbols
+                point_focus_layer.face_color = points_face_color
 
         else:
             point_focus_layer = self._viewer.add_points(
@@ -352,6 +354,9 @@ class TrackAnnotator(QWidget):
                 scale=current_scale,
             )
         point_focus_layer.events.data.connect(self._handle_points_change)
+        self._viewer.layers.selection.active = point_focus_layer
+        point_focus_layer.selected_data.clear()
+        point_focus_layer.mode = "SELECT"
         return point_focus_layer
 
     def _handle_points_change(self, event):
@@ -416,27 +421,24 @@ class TrackAnnotator(QWidget):
             camera_center = get_region_center(
                 original_src_loc[1:], original_tgt_loc[1:]
             )
-            if edge_info["src_present"]:
-                points_data.append(original_src_loc[1:])
-                points_symbols.append("disc")
+            current_step = original_src_loc[0]
+            if (src_present := edge_info.get("src_present", False)) or edge_info.get(
+                "tgt_present", False
+            ):
+                loc = original_src_loc if src_present else original_tgt_loc
+                symbol = "disc" if src_present else "ring"
+                points_data.append(loc[1:])
+                points_symbols.append(symbol)
                 points_face_colors.append(POINT_IN_FRAME_COLOR)
-                camera_center = original_src_loc[1:]
-                current_step = original_src_loc[0]
-            if edge_info["tgt_present"]:
-                points_data.append(original_tgt_loc[1:])
-                points_symbols.append("ring")
-                points_face_colors.append(POINT_OUT_FRAME_COLOR)
-                camera_center = original_tgt_loc[1:]
-                current_step = original_tgt_loc[0]
-            points_focus_layer = self._display_points_layer(
-                points_data, points_symbols, points_face_colors
-            )
+                camera_center = loc[1:]
+                current_step = loc[0]
+            else:
+                # nothing to display...
+                edge_label = "Deleted"
+            self._display_points_layer(points_data, points_symbols, points_face_colors)
             self._viewer.camera.center = np.multiply(camera_center, current_scale)
             self._viewer.camera.zoom = 70
             self._viewer.dims.current_step = (current_step, 0, 0)
-            self._viewer.layers.selection.active = points_focus_layer
-            points_focus_layer.selected_data.clear()
-            points_focus_layer.mode = "SELECT"
             # if there was a vector, we need to clear its data because there's no vector
             if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
                 self._viewer.layers[EDGE_FOCUS_VECTOR_NAME].data = []
@@ -446,7 +448,7 @@ class TrackAnnotator(QWidget):
             )
             self._viewer.window.qt_viewer.dims.setFocus()
         self._edge_status_label.setText(edge_label)
-        self._reset_to_original_button.enabled = edge_label == "Edited"
+        self._reset_to_original_button.enabled = edge_label in {"Edited", "Deleted"}
 
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
@@ -578,10 +580,6 @@ class TrackAnnotator(QWidget):
         if num_points > 2:
             show_info("More than two points in the current edge. Resetting edge.")
             return False
-        # TODO: is this actually ok?
-        if num_points == 0:
-            show_info("No points in the current edge. Resetting edge.")
-            return False
         # points data is either 2 or 1
         if num_points == 2:
             src_idx, tgt_idx = get_src_tgt_idx(points_layer.symbol)
@@ -606,7 +604,7 @@ class TrackAnnotator(QWidget):
             if not point_one_moved and not point_two_moved:
                 has_two_original_points = True
         # single point in the data
-        else:
+        elif num_points == 1:
             if points_layer.symbol[0] != "disc" and points_layer.symbol[0] != "ring":
                 show_info(
                     "Remaining point is neither source nor target. Did you change symbols? Resetting edge."
@@ -708,6 +706,11 @@ class TrackAnnotator(QWidget):
                 self._add_node_with_attrs(gt_node_attrs)
                 self._tp_objects.add(gt_node_attrs["orig_idx"])
                 actions["added_to_tpo"].append(gt_node_attrs["orig_idx"])
+        elif num_points == 0:
+            # this is just an FP edge, can't add any nodes
+            nxg.edges[original_edge][FP_EDGE_ATTR] = True
+            self._fp_edges.add(original_edge)
+            actions["added_to_fpe"].append(original_edge)
 
         # mark this edge as seen
         self._edge_actions[original_edge] = actions
