@@ -125,6 +125,10 @@ class TrackAnnotator(QWidget):
         )
         self._seg_combo.changed.connect(self._setup_annotation_layers)
         self._track_combo.changed.connect(self._setup_annotation_layers)
+        self._viewer.layers.events.inserted.connect(self._seg_combo.reset_choices)
+        self._viewer.layers.events.removed.connect(self._seg_combo.reset_choices)
+        self._viewer.layers.events.inserted.connect(self._track_combo.reset_choices)
+        self._viewer.layers.events.removed.connect(self._track_combo.reset_choices)
 
         # widgets for navigating edges
         self.base_layout = QVBoxLayout()
