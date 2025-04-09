@@ -352,11 +352,16 @@ class TrackAnnotator(QWidget):
         ]
         original_src_loc, original_tgt_loc = self._get_edge_locs(current_edge_idx)
         current_scale = self._seg_combo.value.scale[1:]
+        edge_label = "Seen"
         # there's a gt edge we can display here, let's do that
         if "gt_edge" in edge_info:
             gt_edge_idx = edge_info["gt_edge"]
             src_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[0]])
             tgt_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[1]])
+            if not np.allclose(src_loc, original_src_loc) or not np.allclose(
+                tgt_loc, original_tgt_loc
+            ):
+                edge_label = "Edited"
             center = get_region_center(src_loc[1:], tgt_loc[1:])
             self._add_current_edge_focus_point(src_loc, tgt_loc)
             self._viewer.camera.center = np.multiply(center, current_scale)
@@ -364,6 +369,7 @@ class TrackAnnotator(QWidget):
             self._viewer.dims.current_step = (src_loc[0], 0, 0)
         # there's no edge, but we may want to display some points, with no edge
         else:
+            edge_label = "Edited"
             points_data = []
             points_symbols = []
             points_face_colors = []
@@ -401,7 +407,7 @@ class TrackAnnotator(QWidget):
                 "ignore", message="Public access to Window.qt_viewer is deprecated"
             )
             self._viewer.window.qt_viewer.dims.setFocus()
-        self._edge_status_label.setText("Seen")
+        self._edge_status_label.setText(edge_label)
 
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
