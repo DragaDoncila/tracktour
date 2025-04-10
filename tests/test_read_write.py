@@ -68,10 +68,9 @@ def test_get_reader(tmp_path, dummy_tracks):
 def test_reader_csv_only(tmp_path, dummy_tracks):
     tracks_df, graph = dummy_tracks
     pth = tmp_path / "dummy.csv"
-    json_pth = tmp_path / "dummy.json"
     tracks_df.to_csv(pth, index=False)
 
-    with pytest.warns(match=f"Graph file {str(json_pth)} not found"):
+    with pytest.warns(match=f"Graph file .*json not found"):
         tracks_tuple = reader(str(pth))
         assert len(tracks_tuple) == 1
         data, meta, lyr_tpe = tracks_tuple[0]
