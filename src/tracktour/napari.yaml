@@ -2,6 +2,7 @@ name: tracktour
 display_name: Tracktour
 contributions:
   commands:
+    # widgets
     - id: tracktour.merge_explorer
       title: Merge Explorer...
       python_name: tracktour._napari._merge_explorer:MergeExplorer
@@ -11,6 +12,14 @@ contributions:
     - id: tracktour.track_annotator
       title: Annotate Tracks...
       python_name: tracktour._napari._track_editor:TrackAnnotator
+    # reader
+    - id: tracktour.get_reader
+      title: Tracks Reader
+      python_name: tracktour._napari._read_write_tracks:get_reader
+    # tracks writer
+    - id: tracktour.write_tracks
+      title: Tracks Writer
+      python_name: tracktour._napari._read_write_tracks:write_tracks
   widgets:
     - command: tracktour.merge_explorer
       display_name: Merge Explorer
@@ -18,3 +27,11 @@ contributions:
       display_name: Track Solver
     - command: tracktour.track_annotator
       display_name: Annotate Tracks
+  readers:
+    - command: tracktour.get_reader
+      filename_patterns: ['*.csv', '*.json']
+      accepts_directories: False
+  writers:
+    - command: tracktour.write_tracks
+      layer_types: ['tracks']
+      filename_extensions: ['.csv']
