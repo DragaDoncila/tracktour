@@ -452,6 +452,10 @@ class TrackAnnotator(QWidget):
 
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
+        if self._current_display_idx == len(self._edge_sample_order) - 1:
+            self._finish_annotating()
+            return
+
         if edge_saved:
             self._current_display_idx += 1
         if (
@@ -465,9 +469,12 @@ class TrackAnnotator(QWidget):
             self._display_edge(self._current_display_idx)
 
         # next button needs to be enabled current edge is not the last edge
-        self._next_edge_button.enabled = (
-            self._current_display_idx < len(self._edge_sample_order) - 1
+        self._next_edge_button.enabled = self._current_display_idx < len(
+            self._edge_sample_order
         )
+        if self._current_display_idx == len(self._edge_sample_order) - 1:
+            self._next_edge_button.text = "Save && Finish"
+
         # previous button needs to be enabled if current edge is not the first edge
         self._previous_edge_button.enabled = self._current_display_idx > 0
 
@@ -490,6 +497,23 @@ class TrackAnnotator(QWidget):
         )
         # previous button needs to be enabled if current edge is not the first edge
         self._previous_edge_button.enabled = self._current_display_idx > 0
+
+    def _finish_annotating(self):
+        self._next_edge_button.enabled = False
+        self._previous_edge_button.enabled = False
+        self._reset_edge_button.enabled = False
+        self._reset_to_original_button.enabled = False
+        if EDGE_FOCUS_POINT_NAME in self._viewer.layers:
+            self._viewer.layers[EDGE_FOCUS_POINT_NAME].events.data.disconnect(
+                self._handle_points_change
+            )
+            self._viewer.dims.events.current_step.disconnect(
+                self._handle_current_step_change
+            )
+            self._viewer.layers.remove(EDGE_FOCUS_POINT_NAME)
+        if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
+            self._viewer.layers.remove(EDGE_FOCUS_VECTOR_NAME)
+        self._points_layer_changed = False
 
     def get_new_node_index(self, node_attrs):
         """
