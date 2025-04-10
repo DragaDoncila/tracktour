@@ -237,6 +237,12 @@ class TrackAnnotator(QWidget):
             self._original_nxg = tracks_layer.metadata["nxg"]
             return tracks_layer.metadata["nxg"]
         nxg = get_nxg_from_tracks(tracks_layer)
+        seg = self._seg_combo.value.data
+        node_labels = {
+            node_id: seg.data[tuple(get_int_loc(get_loc_array(node_info)))]
+            for node_id, node_info in nxg.nodes(data=True)
+        }
+        nx.set_node_attributes(nxg, node_labels, "label")
         self._original_nxg = nxg
         return nxg
 
