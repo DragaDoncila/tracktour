@@ -928,7 +928,9 @@ class TrackAnnotator(QWidget):
             )
         # delete and then restore color_array to avoid error in saving
         sol_nxg = self._get_original_nxg()
-        colors = {node: sol_nxg.nodes[node].pop("color") for node in sol_nxg.nodes}
+        colors = {
+            node: sol_nxg.nodes[node].pop("color", None) for node in sol_nxg.nodes
+        }
 
         nx.write_graphml(self._gt_nxg, gt_path)
         nx.write_graphml(self._get_original_nxg(), sol_path)
