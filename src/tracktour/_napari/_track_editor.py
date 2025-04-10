@@ -152,6 +152,11 @@ class TrackAnnotator(QWidget):
         self._edge_status_layout = QHBoxLayout()
         self._edge_status_layout.addWidget(QLabel("Edge Status: "))
 
+        # widgets for behaviour config
+        self._warn_on_orphan_node_checkbox = create_widget(
+            annotation=bool, label="Warn on orphan node"
+        )
+
         self._edge_status_label = QLabel("New")
         self._edge_status_layout.addWidget(self._edge_status_label)
         self._reset_to_original_button = PushButton(text="Reset to Original")
@@ -182,8 +187,8 @@ class TrackAnnotator(QWidget):
         self.base_layout.addWidget(self._track_combo.native)
         self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._edge_control_layout)
-        self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._edge_status_layout)
+        self.base_layout.addWidget(self._warn_on_orphan_node_checkbox.native)
         self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._counts_grid_layout)
         self.base_layout.addWidget(self._view_ground_truth_button.native)
@@ -308,7 +313,6 @@ class TrackAnnotator(QWidget):
                 vector_style=vectors_style,
                 scale=vectors_scale,
             )
-        self._viewer.layers.selection.active = point_focus_layer
         point_focus_layer.selected_data.clear()
         point_focus_layer.mode = "SELECT"
         with warnings.catch_warnings():
@@ -316,6 +320,7 @@ class TrackAnnotator(QWidget):
                 "ignore", message="Public access to Window.qt_viewer is deprecated"
             )
             self._viewer.window.qt_viewer.dims.setFocus()
+        self._viewer.layers.selection.active = point_focus_layer
 
     def _get_edge_locs(self, current_edge_idx=None):
         if current_edge_idx is None:
@@ -588,6 +593,26 @@ class TrackAnnotator(QWidget):
         self._gt_nxg.add_nodes_from([(node_index, node_attrs)])
         return node_index
 
+    def _get_node_is_orphan(self, node_id):
+        nxg = self._get_original_nxg()
+        for in_edge in nxg.in_edges(node_id):
+            if not nxg.edges[in_edge].get(FP_EDGE_ATTR, False):
+                return False
+        for out_edge in nxg.out_edges(node_id):
+            if not nxg.edges[out_edge].get(FP_EDGE_ATTR, False):
+                return False
+        return True
+
+    def _handle_orphan_node(self, node_id, actions):
+        nxg = self._get_original_nxg()
+        if self._warn_on_orphan_node_checkbox.value:
+            # TODO: add actual warning
+            show_info("Orphan node detected. Marking as FP.")
+        actions["added_to_fpo"].append(node_id)
+        self._fp_objects.add(node_id)
+        nxg.nodes[node_id][FP_NODE_ATTR] = True
+        self._update_label_displays()
+
     def _save_edge_annotation(self):
         seg = self._seg_combo.value.data
         original_edge = self._edge_sample_order[self._current_display_idx]
@@ -684,6 +709,13 @@ class TrackAnnotator(QWidget):
                 gt_edge_attr = {FN_EDGE_ATTR: True}
                 self._fp_edges.add(original_edge)
                 actions["added_to_fpe"].append(original_edge)
+                src_orphan = self._get_node_is_orphan(original_edge[0])
+                tgt_orphan = self._get_node_is_orphan(original_edge[1])
+                if src_orphan:
+                    self._handle_orphan_node(original_edge[0], actions)
+                if tgt_orphan:
+                    self._handle_orphan_node(original_edge[1], actions)
+
             # add the GT edge
             gt_src_attrs = self.get_gt_node_attrs(src_idx)
             gt_tgt_attrs = self.get_gt_node_attrs(tgt_idx)
@@ -718,23 +750,36 @@ class TrackAnnotator(QWidget):
             # edge, so store whether the source or the target remains
             nxg.edges[original_edge]["src_present"] = False
             nxg.edges[original_edge]["tgt_present"] = False
-            if len(points_layer.data) == 1:
-                if points_layer.symbol[0] == "disc":
-                    nxg.edges[original_edge]["src_present"] = True
-                else:
-                    nxg.edges[original_edge]["tgt_present"] = True
-                # add node to GT with increased vote
-                gt_node_attrs = self.get_gt_node_attrs(0)
-                # we've already checked the remaining point hasn't moved, so we can just add here
-                # as TP
-                self._add_node_with_attrs(gt_node_attrs)
-                self._tp_objects.add(gt_node_attrs["orig_idx"])
-                actions["added_to_tpo"].append(gt_node_attrs["orig_idx"])
+            src_orphan = False
+            tgt_orphan = False
+            if points_layer.symbol[0] == "disc":
+                nxg.edges[original_edge]["src_present"] = True
+                tgt_orphan = self._get_node_is_orphan(original_edge[1])
+            else:
+                nxg.edges[original_edge]["tgt_present"] = True
+                src_orphan = self._get_node_is_orphan(original_edge[0])
+            # add node to GT with increased vote
+            gt_node_attrs = self.get_gt_node_attrs(0)
+            # we've already checked the remaining point hasn't moved, so we can just add here
+            # as TP
+            self._add_node_with_attrs(gt_node_attrs)
+            self._tp_objects.add(gt_node_attrs["orig_idx"])
+            actions["added_to_tpo"].append(gt_node_attrs["orig_idx"])
+            if src_orphan:
+                self._handle_orphan_node(original_edge[0], actions)
+            if tgt_orphan:
+                self._handle_orphan_node(original_edge[1], actions)
         elif num_points == 0:
             # this is just an FP edge, can't add any nodes
             nxg.edges[original_edge][FP_EDGE_ATTR] = True
             self._fp_edges.add(original_edge)
             actions["added_to_fpe"].append(original_edge)
+            src_orphan = self._get_node_is_orphan(original_edge[0])
+            tgt_orphan = self._get_node_is_orphan(original_edge[1])
+            if src_orphan:
+                self._handle_orphan_node(original_edge[0], actions)
+            if tgt_orphan:
+                self._handle_orphan_node(original_edge[1], actions)
 
         # mark this edge as seen
         self._edge_actions[original_edge] = actions
@@ -788,12 +833,11 @@ class TrackAnnotator(QWidget):
                         to_remove_sol.add(self._gt_nxg.nodes[node]["orig_idx"])
             self._gt_nxg.remove_nodes_from(to_remove_gt)
             self._tp_objects.difference_update(to_remove_sol)
-        self._update_label_displays()
-
         if len(prior_actions["added_to_fpo"]):
             for prior_fp_node in prior_actions["added_to_fpo"]:
                 self._fp_objects.remove(prior_fp_node)
                 nxg.nodes[prior_fp_node].pop(FP_NODE_ATTR, None)
+        self._update_label_displays()
 
     def _update_label_displays(self):
         get_count_label_from_grid(self._counts_grid_layout, "TPO").setText(
