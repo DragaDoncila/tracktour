@@ -144,6 +144,17 @@ class Tracker:
         seg: Optional[np.ndarray] = None,
         scale: Tuple[float, float] = (1.0, 1.0),
     ) -> None:
+        """Create a Tracker instance for a given segmentation.
+
+        Parameters
+        ----------
+        im_shape : Optional[Tuple[int, int]], optional
+            shape of a single frame of the segmentation in pixels, by default None
+        seg : Optional[np.ndarray], optional
+            segmentation array, by default None
+        scale : Tuple[float, float], optional
+            scale of a single frame of the segmentation in pixels, by default (1.0, 1.0)
+        """
         if im_shape is None and seg is None:
             raise ValueError("Either im_shape or seg must be provided.")
         if seg is not None:
@@ -234,6 +245,11 @@ class Tracker:
         """
         if costs not in ["distance", "overlap"]:
             raise ValueError("Costs must be either 'distance' or 'overlap'.")
+        if len(self._im_shape) == 3 and len(location_keys) == 2:
+            warnings.warn(
+                f"Segmentation frame is 3D but location keys are {location_keys}. Using ('z', 'y', 'x') as location keys."
+            )
+            location_keys = ("z", "y", "x")
 
         self.location_keys = location_keys
         self.frame_key = frame_key

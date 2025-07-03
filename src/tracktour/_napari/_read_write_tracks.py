@@ -34,7 +34,7 @@ def get_reader(path):
 
 def get_tracklets_array(path):
     df = pd.read_csv(path)
-    if "track-id" not in df.columns:
+    if "track_id" not in df.columns:
         return
     if "t" not in df.columns:
         return
@@ -42,7 +42,7 @@ def get_tracklets_array(path):
         return
     if "x" not in df.columns:
         return
-    columns = ["track-id", "t"]
+    columns = ["track_id", "t"]
     if "z" in df.columns:
         columns.append("z")
     columns.extend(["y", "x"])
@@ -87,7 +87,7 @@ def reader(path):
 
 
 def write_tracks(path, layer_data, attributes):
-    columns = ["track-id", "t"]
+    columns = ["track_id", "t"]
     # if data array has 5 columns, we have a z column
     if layer_data.shape[1] == 5:
         columns.append("z")

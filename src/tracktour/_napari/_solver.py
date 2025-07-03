@@ -94,9 +94,6 @@ class TrackingSolver(Container):
         # make tracks layer and coloured seg/points layer
         coloured_points, coloured_labels, tracks = get_coloured_solution_layers(
             tracked,
-            tracker.location_keys,
-            tracker.frame_key,
-            tracker.value_key,
             tracker.scale,
             segmentation,
         )

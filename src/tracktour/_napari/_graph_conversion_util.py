@@ -23,27 +23,27 @@ def _get_parents(sol):
     Returns
     -------
     Dict[int, list[int]]
-        dictionary of track-id to list of parent track-ids
+        dictionary of track_id to list of parent track_ids
     """
     parents_graph = defaultdict(set)
     for node_id, node_info in sol.nodes(data=True):
         # merge node has multiple parents
         if sol.in_degree(node_id) > 1:
             parent_tids = {
-                sol.nodes[parent]["track-id"] for parent in sol.predecessors(node_id)
+                sol.nodes[parent]["track_id"] for parent in sol.predecessors(node_id)
             }
-            parents_graph[node_info["track-id"]].update(parent_tids)
+            parents_graph[node_info["track_id"]].update(parent_tids)
         # dividing node's children have it as parent
         if sol.out_degree(node_id) > 1:
             for child in sol.successors(node_id):
-                parents_graph[sol.nodes[child]["track-id"]].add(node_info["track-id"])
+                parents_graph[sol.nodes[child]["track_id"]].add(node_info["track_id"])
         # skip edges have different track ID so
         # dest node gets source added as parent
         elif sol.out_degree(node_id) == 1:
             for child in sol.successors(node_id):
-                child_id = sol.nodes[child]["track-id"]
-                if child_id != node_info["track-id"]:
-                    parents_graph[child_id].add(node_info["track-id"])
+                child_id = sol.nodes[child]["track_id"]
+                if child_id != node_info["track_id"]:
+                    parents_graph[child_id].add(node_info["track_id"])
     # don't want defaultdict behaviour anymore
     return {k: list(v) for k, v in parents_graph.items()}
 
@@ -57,16 +57,16 @@ def get_tracks_from_nxg(nxg: "nx.DiGraph"):
     Returns:
         tracks (napari.layers.Tracks): track layer of solution
     """
-    if any("track-id" not in nxg.nodes[node] for node in nxg.nodes):
+    if any("track_id" not in nxg.nodes[node] for node in nxg.nodes):
         assign_track_id(nxg)
     sol_node_df = pd.DataFrame.from_dict(nxg.nodes, orient="index")
     parent_connections = _get_parents(nxg)
     location_cols = ["y", "x"]
     if "z" in sol_node_df.columns:
         location_cols = ["z"] + location_cols
-    track_df = sol_node_df[sol_node_df["track-id"] != -1].sort_values(
-        ["track-id", "t"]
-    )[["track-id", "t"] + location_cols]
+    track_df = sol_node_df[sol_node_df["track_id"] != -1].sort_values(
+        ["track_id", "t"]
+    )[["track_id", "t"] + location_cols]
     track_layer = Tracks(
         track_df, graph=parent_connections, tail_length=1, name="tracks"
     )
@@ -103,23 +103,25 @@ def get_napari_graph(tracked, location_keys, frame_key, value_key):
     return graph_layer
 
 
-def get_coloured_solution_layers(
-    tracked, location_keys, frame_key, value_key, scale, segmentation
-):
+def get_coloured_solution_layers(tracked, scale, segmentation):
+    frame_key = tracked.frame_key
+    value_key = tracked.value_key
+    location_keys = tracked.location_keys
     layer_scale = (1,) + tuple(scale)
+
     subgraph = tracked.as_nx_digraph()
     tracks_layer = get_tracks_from_nxg(subgraph)
     tracks_layer.scale = layer_scale
     tracks_layer.metadata = {"nxg": subgraph}
 
-    # recolor segmentation and graph points by track-id
+    # recolor segmentation and graph points by track_id
     sol_node_df = pd.DataFrame.from_dict(subgraph.nodes, orient="index")
     masks = mask_by_id(sol_node_df, segmentation, frame_key, value_key)
     masked_seg = Labels(masks, name="Track Coloured Seg", visible=False)
     masked_seg.scale = layer_scale
     # subgraph, tracks layer and graph layer **all** need to know about colour :<<<<
     color_dict = {
-        node_id: (node_info["track-id"], masked_seg.get_color(node_info["track-id"]))
+        node_id: (node_info["track_id"], masked_seg.get_color(node_info["track_id"]))
         for node_id, node_info in subgraph.nodes(data=True)
     }
     nx.set_node_attributes(subgraph, {k: v[1] for k, v in color_dict.items()}, "color")
@@ -142,14 +144,14 @@ def get_nxg_from_tracks(tracks_layer: "napari.layers.Tracks"):
     Returns:
         nxg (nx.DiGraph): networkx DirectedGraph of tracks
     """
-    # numpy array will be (track-id, t, z, y, x) or (track-id, t, y, x)
+    # numpy array will be (track_id, t, z, y, x) or (track_id, t, y, x)
     loc_cols = ["z", "y", "x"] if tracks_layer.data.shape[1] == 5 else ["y", "x"]
-    node_info = pd.DataFrame(tracks_layer.data, columns=["track-id", "t"] + loc_cols)
+    node_info = pd.DataFrame(tracks_layer.data, columns=["track_id", "t"] + loc_cols)
     parent_info = tracks_layer.graph
     node_container = []
     edges = []
     tid_first_last = defaultdict(dict)
-    for track_id, track_nodes in node_info.groupby("track-id"):
+    for track_id, track_nodes in node_info.groupby("track_id"):
         track_nodes = track_nodes.sort_values(by="t")
         node_container.extend(track_nodes.to_dict(orient="index").items())
         edges.extend(zip(track_nodes.index[:-1], track_nodes.index[1:]))

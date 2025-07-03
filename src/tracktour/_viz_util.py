@@ -5,18 +5,16 @@ import pandas as pd
 
 def mask_by_id(nodes: pd.DataFrame, seg: np.ndarray, frame_key: str, value_key: str):
     masks = np.zeros_like(seg)
-    tids = nodes["track-id"].unique()
-    for i in tids:
-        track_nodes = nodes[nodes["track-id"] == i]
-        for row in track_nodes.itertuples():
-            t = getattr(row, frame_key)
-            orig_label = getattr(row, value_key)
-            mask = seg[t] == orig_label
-            masks[t][mask] = i
+    for row in nodes.itertuples():
+        tid = getattr(row, "track_id")
+        t = getattr(row, frame_key)
+        orig_label = getattr(row, value_key)
+        mask = seg[t] == orig_label
+        masks[t][mask] = tid
 
-    unassigned = nodes[nodes["track-id"] == -1]
+    unassigned = nodes[nodes["track_id"] == -1]
     if len(unassigned) != 0:
-        raise ValueError("Unassigned track-id for nodes!")
+        raise ValueError("Unassigned track_id for nodes!")
 
     return masks
 

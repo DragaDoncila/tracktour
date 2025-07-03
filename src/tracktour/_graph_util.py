@@ -47,7 +47,7 @@ def assign_track_id(nx_sol):
         if node not in tid_dict:
             tid_dict[node] = max_id + 1
             max_id += 1
-    nx.set_node_attributes(nx_sol, tid_dict, "track-id")
+    nx.set_node_attributes(nx_sol, tid_dict, "track_id")
     return max_id
 
 
@@ -108,11 +108,11 @@ def get_ctc_tracks(tracked_sol: "nx.DiGraph", frame_key: str = "t"):
     Parameters
     ----------
     tracked_sol : nx.DiGraph
-        networkx solution graph with track-id assigned
+        networkx solution graph with track_id assigned
     """
     node_df = pd.DataFrame.from_dict(tracked_sol.nodes, orient="index")
-    t_only = node_df[["track-id", frame_key]]
-    grouped = t_only.groupby("track-id")
+    t_only = node_df[["track_id", frame_key]]
+    grouped = t_only.groupby("track_id")
     start_frame_idx = grouped.idxmin()
     end_frames_idx = grouped.idxmax()
 
@@ -128,14 +128,14 @@ def get_ctc_tracks(tracked_sol: "nx.DiGraph", frame_key: str = "t"):
         if len(predecessors) == 0:
             parent_tid = 0
         else:
-            parent_tid = tracked_sol.nodes[predecessors[0]]["track-id"]
+            parent_tid = tracked_sol.nodes[predecessors[0]]["track_id"]
         end_frame = tracked_sol.nodes[end_frames_idx.loc[tid].iloc[0]][frame_key]
         start_frames.append(start_frame)
         end_frames.append(end_frame)
         parent_tids.append(parent_tid)
     track_df = pd.DataFrame(
         {
-            "track-id": tids,
+            "track_id": tids,
             "start": start_frames,
             "end": end_frames,
             "parent": parent_tids,
