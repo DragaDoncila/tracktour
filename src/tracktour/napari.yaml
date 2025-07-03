@@ -9,9 +9,9 @@ contributions:
     - id: tracktour.track_solver
       title: Track Solver...
       python_name: tracktour._napari._solver:TrackingSolver
-    - id: tracktour.track_editor
-      title: Track Editor...
-      python_name: tracktour._napari._track_editor:TrackEditor
+    - id: tracktour.track_annotator
+      title: Annotate Tracks...
+      python_name: tracktour._napari._track_editor:TrackAnnotator
     # reader
     - id: tracktour.get_reader
       title: Tracks Reader
@@ -25,8 +25,8 @@ contributions:
       display_name: Merge Explorer
     - command: tracktour.track_solver
       display_name: Track Solver
-    - command: tracktour.track_editor
-      display_name: Track Editor
+    - command: tracktour.track_annotator
+      display_name: Annotate Tracks
   readers:
     - command: tracktour.get_reader
       filename_patterns: ['*.csv', '*.json']
