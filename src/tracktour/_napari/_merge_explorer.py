@@ -74,7 +74,7 @@ class MergeExplorer(Container):
         def get_choices(_merge_id_combo):
             merge_nodes = [
                 (
-                    f'Track {nxg.nodes[node]["track-id"]}, Frame {nxg.nodes[node]["t"]}',
+                    f'Track {nxg.nodes[node]["track_id"]}, Frame {nxg.nodes[node]["t"]}',
                     node,
                 )
                 for node in nxg.nodes
@@ -179,7 +179,7 @@ class MergeExplorer(Container):
                     {
                         node: self._old_color[node]
                         for node in nxg.nodes
-                        if nxg.nodes[node]["track-id"] == tid
+                        if nxg.nodes[node]["track_id"] == tid
                     }
                 )
             nx.set_node_attributes(nxg, tid_node_color, "color")

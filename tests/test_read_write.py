@@ -36,7 +36,7 @@ def dummy_tracks():
         [6, 1, 196, 46],
         [6, 2, 196, 47],
     ]
-    tracks_df = pd.DataFrame(tracks_data, columns=["track-id", "t", "y", "x"])
+    tracks_df = pd.DataFrame(tracks_data, columns=["track_id", "t", "y", "x"])
     graph = {5: [4], 6: [4]}
     return tracks_df, graph
 
@@ -96,7 +96,6 @@ def test_reader_csv_and_json(tmp_path, dummy_tracks):
 
 def test_reader_gives_nothing(tmp_path, dummy_tracks):
     tracks_df, graph = dummy_tracks
-    tracks_df.rename(columns={"track-id": "track_id"}, inplace=True)
     save_tracks(tmp_path, tracks_df, graph)
     with pytest.warns(match="Tracklets not found for"):
         assert reader(str(tmp_path / "dummy.csv")) == [(None,)]
@@ -116,7 +115,7 @@ def test_writer_with_graph(tmp_path, dummy_tracks):
     assert (tmp_path / "dummy.json").exists()
     assert get_graph(tmp_path / "dummy.json") == graph
     written_df = pd.read_csv(tmp_path / "dummy.csv")
-    np.testing.assert_array_equal(written_df.columns, ["track-id", "t", "y", "x"])
+    np.testing.assert_array_equal(written_df.columns, ["track_id", "t", "y", "x"])
     np.testing.assert_array_equal(written_df.values, tracks_df.values)
 
 

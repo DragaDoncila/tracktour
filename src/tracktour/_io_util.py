@@ -63,7 +63,7 @@ def get_ctc_output(original_seg, tracked_nx, frame_key, value_key, location_keys
     node_df = pd.DataFrame.from_dict(mergeless.nodes, orient="index")
     relabelled_seg = mask_by_id(node_df, original_seg, frame_key, value_key)
     nx.set_node_attributes(
-        mergeless, nx.get_node_attributes(mergeless, "track-id"), name=value_key
+        mergeless, nx.get_node_attributes(mergeless, "track_id"), name=value_key
     )
     track_df = get_ctc_tracks(mergeless)
     return relabelled_seg, track_df, max_id
