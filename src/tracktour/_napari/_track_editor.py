@@ -274,16 +274,18 @@ class TrackAnnotator(QWidget):
             return
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
         src_loc, tgt_loc = self._get_edge_locs()
-        src_t = src_loc[0]
-        tgt_t = tgt_loc[0]
-        current_step = event.value
+        slider_dims = self._viewer.dims.not_displayed
+        src_slider_points = np.round(src_loc[list(slider_dims)]).astype(int)
+        tgt_slider_points = np.round(tgt_loc[list(slider_dims)]).astype(int)
+        current_slider_step = np.asarray([event.value[i] for i in slider_dims])
         current_symbols = points_layer.symbol
-        current_t = current_step[0]
         face_colors = []
         for symbol in current_symbols:
-            if symbol == "disc" and src_t == current_t:
+            if symbol == "disc" and np.allclose(src_slider_points, current_slider_step):
                 face_colors.append(POINT_IN_FRAME_COLOR)
-            elif symbol == "ring" and tgt_t == current_t:
+            elif symbol == "ring" and np.allclose(
+                tgt_slider_points, current_slider_step
+            ):
                 face_colors.append(POINT_IN_FRAME_COLOR)
             else:
                 face_colors.append(POINT_OUT_FRAME_COLOR)
@@ -460,6 +462,10 @@ class TrackAnnotator(QWidget):
     def _setup_display_options(
         self, src_loc, tgt_loc, current_scale, current_step=None, camera_center=None
     ):
+        # we have a 3D + t layer, so we need to make sure
+        # the user can see the edge in the frame
+        if len(self._seg_combo.value.data.shape) == 4:
+            self._setup_thick_slicing(src_loc, tgt_loc, current_scale)
         if current_step is None:
             current_step = src_loc
         if camera_center is None:
@@ -467,12 +473,28 @@ class TrackAnnotator(QWidget):
             camera_center = get_region_center(src_loc[1:], tgt_loc[1:])
         self._viewer.camera.center = np.multiply(camera_center, current_scale)
         # TODO: should be dynamic based on data...
-        self._viewer.camera.zoom = 70
+        self._viewer.camera.zoom = 30
         self._viewer.dims.current_step = current_step
-        # we have a 3D + t layer, so we need to make sure
-        # the user can see the edge in the frame
-        # if len(self._seg_combo.value.data.shape) == 4:
-        #     self._setup_thick_slicing(src_loc, tgt_loc)
+
+    def _setup_thick_slicing(self, src_loc, tgt_loc, current_scale):
+        """Turn on out_of_slice display for points and vectors.
+
+        Set up thick slicing for the image and labels.
+        """
+        # the thickness needs to be twice the scaled distance between the z
+        # coordinate of the two points so that when
+        # any of the points is in the "middle" of the slice, we still
+        # see the other point
+        required_z_thickness = (
+            2 * (np.abs(src_loc[1] - tgt_loc[1]) + 1) * current_scale[0]
+        )
+        self._viewer.dims.thickness = (1, required_z_thickness, 1, 1)
+        self._viewer.layers[EDGE_FOCUS_POINT_NAME].projection_mode = "ALL"
+        self._viewer.layers[EDGE_FOCUS_VECTOR_NAME].projection_mode = "ALL"
+        for layer in self._viewer.layers:
+            if layer.visible:
+                if type(layer).__name__ == "Image":
+                    layer.projection_mode = "MEAN"
 
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
