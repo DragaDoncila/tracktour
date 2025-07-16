@@ -44,6 +44,10 @@ class GroundTruthAnnotator(Container):
         self._parent_table = Table(columns=["Child Track ID", "Parent Track ID"])
         self._parent_table.changed.connect(self._edit_graph_from_table)
 
+        self._open_table = FileEdit(mode="r", label="Existing Graph", filter="*.txt")
+        self._open_table_btn = PushButton(label="Load Graph")
+        self._open_table_btn.clicked.connect(self._load_existing_graph)
+
         self._choose_folder = FileEdit(mode="d", label="Target Directory")
 
         self._save_as_ctc_btn = PushButton(label="Save to CTC Format")
@@ -55,6 +59,8 @@ class GroundTruthAnnotator(Container):
                 self._child_label_selector,
                 self._parent_label_selector,
                 self._add_to_graph_btn,
+                self._open_table,
+                self._open_table_btn,
                 self._parent_table,
                 self._choose_folder,
                 self._save_as_ctc_btn,
@@ -73,10 +79,16 @@ class GroundTruthAnnotator(Container):
             )
         self._current_labels_layer = self._labels_selector.value
         if self._current_labels_layer is not None:
+            if not isinstance(self._current_labels_layer.data, np.ndarray):
+                show_warning("Can only annotate numpy arrays. Converting now.")
+                self._current_labels_layer.data = np.asarray(
+                    self._current_labels_layer.data,
+                    dtype=self._current_labels_layer.data.dtype,
+                )
             self._current_labels_layer.events.selected_label.connect(
                 self._reset_label_id_choices
             )
-        self._reset_label_id_choices()
+            self._reset_label_id_choices()
 
     def _setup_parents_table(self):
         header_strs = ["Child Track ID", "Parent Track ID"]
@@ -233,3 +245,22 @@ class GroundTruthAnnotator(Container):
                 f"No directory selected! Saving to current: {os.path.abspath(out_dir)}"
             )
         _save_results(seg, track_info, out_dir)
+
+    def _load_existing_graph(self, event):
+        graph_path = self._open_table.value
+        if not str(graph_path).endswith(".txt"):
+            show_warning("Not a valid graph file path, ignoring.")
+            return
+        graph = pd.read_csv(graph_path, header=None, sep=" ")
+        graph.columns = ["track_id", "start", "end", "parent"]
+        self._graph = {
+            tid: [parent]
+            for tid, parent in zip(graph["track_id"], graph["parent"])
+            if parent != 0
+        }
+        dict_as_lists = {
+            "Child Track ID": list(self._graph.keys()),
+            "Parent Track ID": [parents[0] for parents in self._graph.values()],
+        }
+        self._parent_table.set_value(dict_as_lists)
+        self._current_table_data = self._parent_table.to_dict(orient="index")
