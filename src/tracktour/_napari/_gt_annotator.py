@@ -59,9 +59,9 @@ class GroundTruthAnnotator(Container):
                 self._child_label_selector,
                 self._parent_label_selector,
                 self._add_to_graph_btn,
+                self._parent_table,
                 self._open_table,
                 self._open_table_btn,
-                self._parent_table,
                 self._choose_folder,
                 self._save_as_ctc_btn,
             ]
