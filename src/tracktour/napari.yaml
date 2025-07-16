@@ -10,8 +10,11 @@ contributions:
       title: Track Solver...
       python_name: tracktour._napari._solver:TrackingSolver
     - id: tracktour.track_annotator
-      title: Annotate Tracks...
+      title: Annotate Solved Tracks...
       python_name: tracktour._napari._track_editor:TrackAnnotator
+    - id: tracktour.annotate_gt
+      title: Annotate Ground Truth...
+      python_name: tracktour._napari._gt_annotator:GroundTruthAnnotator
     # reader
     - id: tracktour.get_reader
       title: Tracks Reader
@@ -26,7 +29,9 @@ contributions:
     - command: tracktour.track_solver
       display_name: Track Solver
     - command: tracktour.track_annotator
-      display_name: Annotate Tracks
+      display_name: Annotate Solved Tracks
+    - command: tracktour.annotate_gt
+      display_name: Annotate Ground Truth
   readers:
     - command: tracktour.get_reader
       filename_patterns: ['*.csv', '*.json']

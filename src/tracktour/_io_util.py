@@ -198,3 +198,25 @@ def get_centers(segmentation):
             axis=1,
         )
         yield props, centroid_cols
+
+
+def _get_track_df_from_seg(seg, graph):
+    # 0 is always going to be a unique value,
+    # but we don't care about it
+    tids = np.unique_values(seg)[1:]
+    starts = []
+    ends = []
+    parents = []
+    for tid in tids:
+        track_seg_indices = np.where(seg == tid)
+        min_frame = np.min(track_seg_indices[0])
+        max_frame = np.max(track_seg_indices[0])
+        # unpack list, list is only necessary for napari tracks...
+        parent = graph.get(tid, [0])[0]
+
+        starts.append(min_frame)
+        ends.append(max_frame)
+        parents.append(parent)
+    return pd.DataFrame(
+        {"track_id": tids, "start": starts, "end": ends, "parent": parents}
+    )
