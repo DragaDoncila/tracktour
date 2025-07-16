@@ -182,7 +182,7 @@ class GroundTruthAnnotator(Container):
         else:
             child_label = self._parent_table.data[changed_dict["row"], other_column]
             parent_label = changed_dict["data"]
-        return int(child_label), int(parent_label), changed_label == "Child Track ID"
+        return child_label, parent_label, changed_label == "Child Track ID"
 
     def _show_graph_in_table(self):
         dict_as_lists = {
@@ -203,6 +203,12 @@ class GroundTruthAnnotator(Container):
             parent_label,
             child_changed,
         ) = self._get_changed_child_parent_labels(changed_dict)
+        if parent_label is None:
+            return
+        if child_label is None:
+            return
+        parent_label = int(parent_label)
+        child_label = int(child_label)
         original_changed_row = self._current_table_data[changed_dict["row"]]
         original_child_id = original_changed_row["Child Track ID"]
         original_parent_id = original_changed_row["Parent Track ID"]
