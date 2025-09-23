@@ -96,6 +96,7 @@ def test_reader_csv_and_json(tmp_path, dummy_tracks):
 
 def test_reader_gives_nothing(tmp_path, dummy_tracks):
     tracks_df, graph = dummy_tracks
+    tracks_df.drop(columns=["track_id"], inplace=True)  # incomplete data
     save_tracks(tmp_path, tracks_df, graph)
     with pytest.warns(match="Tracklets not found for"):
         assert reader(str(tmp_path / "dummy.csv")) == [(None,)]
