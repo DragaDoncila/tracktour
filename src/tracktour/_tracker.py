@@ -13,7 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from scipy.spatial import KDTree
 from tqdm import tqdm
 
-from ._costs import closest_neighbour_child_cost, dist_to_edge_cost_func
+from ._costs import (
+    closest_neighbour_child_cost,
+    dist_to_edge_cost_func,
+    dist_to_edge_cost_single,
+)
 
 
 class Cost(StrEnum):
@@ -174,6 +178,13 @@ class Tracker:
         self.frame_key = None
         self.value_key = None
 
+        self._kd_dict = None
+        self._edge_df = None
+        self._model = None
+        self._model_flow_vars = None
+        self._all_edges = None
+        self._all_vertices = None
+
     @property
     def scale(self):
         return self._scale
@@ -268,30 +279,32 @@ class Tracker:
 
         # build kd-trees
         # TODO: stop passing stuff around now that you store it as an attribute
-        kd_dict = self._build_trees(detections, frame_key, self._scaled_location_keys)
+        self._kd_dict = self._build_trees(
+            detections, frame_key, self._scaled_location_keys
+        )
 
         # get candidate edges
-        edge_df = self._get_candidate_edges(detections, frame_key, kd_dict)
+        self._edge_df = self._get_candidate_edges(detections, frame_key, self._kd_dict)
 
         if costs == "distance":
             # migration cost (on edges) is just euclidean distance
-            edge_df["cost"] = edge_df["distance"]
+            self._edge_df["cost"] = self._edge_df["distance"]
 
             # compute costs for division and appearance/exit - on vertices
             enter_exit_cost, div_cost = self._compute_detection_costs(
-                detections, self._scaled_location_keys, edge_df
+                detections, self._scaled_location_keys, self._edge_df
             )
             detections["enter_cost"] = enter_exit_cost
             detections["exit_cost"] = enter_exit_cost
             detections["div_cost"] = div_cost
         else:
             # migration cost on edges is 1-IOU of two detected objects
-            overlaps = self._compute_edge_overlaps(detections, edge_df)
-            edge_df["iou_overlap"] = overlaps
-            edge_df["cost"] = 1 - edge_df["iou_overlap"]
+            overlaps = self._compute_edge_overlaps(detections, self._edge_df)
+            self._edge_df["iou_overlap"] = overlaps
+            self._edge_df["cost"] = 1 - self._edge_df["iou_overlap"]
 
             # division cost is 1 - IOU sum of all overlapping children
-            div_cost = self._compute_overlap_division_cost(detections, edge_df)
+            div_cost = self._compute_overlap_division_cost(detections, self._edge_df)
             detections["div_cost"] = div_cost
 
             # appearance is infinite
@@ -303,7 +316,7 @@ class Tracker:
 
         # build model
         model, all_edges, all_vertices, gb_time = self._to_gurobi_model(
-            detections, edge_df, frame_key, self._scaled_location_keys
+            detections, self._edge_df, frame_key, self._scaled_location_keys
         )
 
         build_duration = time.time() - start
@@ -580,6 +593,9 @@ class Tracker:
         all_edges = self._get_all_edges(edge_df, detections, frame_key)
 
         m = self._make_gurobi_model_from_edges(all_edges, detections)
+        self._model = m
+        self._all_edges = all_edges
+        self._all_vertices = full_det
 
         build_time = time.time() - start
         return m, all_edges, full_det, build_time
@@ -595,86 +611,102 @@ class Tracker:
         if cost_col_name is None:
             cost_col_name = "cost"
         if lb_col is None:
-            lb_col = [0 for _ in range(len(all_edges))]
+            lb_col = np.zeros(len(all_edges))
         if ub_col is None:
             ub_col = all_edges.capacity.values
 
-        flow_var_info = {
-            (
-                e.Index,
-                Tracker.index_to_label(e.u),
-                Tracker.index_to_label(e.v),
-            ): getattr(e, cost_col_name)
-            for e in all_edges.itertuples()
-        }
-        edge_capacities = all_edges.capacity.values
-        flow_var_names = gp.tuplelist(list(flow_var_info.keys()))
+        edge_keys = []
+        edge_costs = {}
+        for e in all_edges.itertuples():
+            key = (e.Index, Tracker.index_to_label(e.u), Tracker.index_to_label(e.v))
+            edge_keys.append(key)
+            edge_costs[key] = getattr(e, cost_col_name)
+
+        m = gp.Model("tracks")
+
+        flow = m.addVars(
+            edge_keys,
+            obj=edge_costs,
+            lb=lb_col,
+            ub=ub_col,
+            name="flow",
+        )
+        self._model_flow_vars = flow
 
         src_label = Tracker.index_to_label(VirtualVertices.SOURCE.value)
         app_label = Tracker.index_to_label(VirtualVertices.APP.value)
         div_label = Tracker.index_to_label(VirtualVertices.DIV.value)
         target_label = Tracker.index_to_label(VirtualVertices.TARGET.value)
 
-        m = gp.Model("tracks")
-        try:
-            flow = m.addVars(
-                flow_var_names, obj=flow_var_info, lb=lb_col, ub=ub_col, name="flow"
-            )
-        except gp.GurobiError as e:
-            print(e)
+        # If needed, build penalty vars
+        penalty_flow = {}
         if self.PENALIZE_FLOW:
             warnings.warn(
                 "Penalizing flow! This is not the default behavior and may lead to unexpected results."
             )
-            penalty_var_info = {
-                (
+            penalty_keys = []
+            penalty_costs = {}
+            for e in all_edges[(all_edges.u >= 0) & (all_edges.v >= 0)].itertuples():
+                key = (
                     e.Index,
                     Tracker.index_to_label(e.u),
                     Tracker.index_to_label(e.v),
-                ): self.FLOW_PENALTY_COEFFICIENT
-                * getattr(e, cost_col_name)
-                # only real edges can be penalized
-                for e in all_edges[(all_edges.u >= 0) & (all_edges.v >= 0)].itertuples()
-            }
-            penalty_var_names = gp.tuplelist(list(penalty_var_info.keys()))
+                )
+                penalty_keys.append(key)
+                penalty_costs[key] = self.FLOW_PENALTY_COEFFICIENT * getattr(
+                    e, cost_col_name
+                )
             penalty_flow = m.addVars(
-                penalty_var_names, obj=penalty_var_info, lb=0, name="penalty"
+                penalty_keys, obj=penalty_costs, lb=0, name="penalty"
             )
-        # flow = (edge_id, source_label, target_label)
-        src_out_edges = flow.select("*", src_label, "*")
-        target_in_edges = flow.select("*", "*", target_label)
+
+        out_edges = defaultdict(list)
+        in_edges = defaultdict(list)
+        div_edges = defaultdict(list)
+        for k in edge_keys:
+            _, u, v = k
+            out_edges[u].append(flow[k])
+            in_edges[v].append(flow[k])
+            if u == div_label:
+                div_edges[v].append(flow[k])
+
+        src_label = Tracker.index_to_label(VirtualVertices.SOURCE.value)
+        app_label = Tracker.index_to_label(VirtualVertices.APP.value)
+        div_label = Tracker.index_to_label(VirtualVertices.DIV.value)
+        target_label = Tracker.index_to_label(VirtualVertices.TARGET.value)
+
         # whole network flow
-        m.addConstr(sum(src_out_edges) == sum(target_in_edges), "conserv_network")
+        m.addConstr(
+            sum(out_edges[src_label]) == sum(in_edges[target_label]), "conserv_network"
+        )
 
         # dummy vertex flow conservation
-        app_out = flow.select("*", app_label, "*")
-        app_in = flow.select("*", src_label, app_label)
-        m.addConstr(sum(app_in) == sum(app_out), "conserv_app")
+        m.addConstr(
+            sum(in_edges[app_label]) == sum(out_edges[app_label]), "conserv_app"
+        )
+        m.addConstr(
+            sum(in_edges[div_label]) == sum(out_edges[div_label]), "conserv_div"
+        )
 
-        div_out = flow.select("*", div_label, "*")
-        div_in = flow.select("*", src_label, div_label)
-        m.addConstr(sum(div_in) == sum(div_out), "conserv_div")
-
+        # constraints for real detections
         for vertex_id in detections.index:
             lbl = Tracker.index_to_label(vertex_id)
-            self._add_constraints_for_vertex(lbl, m, flow)
+            incoming = in_edges.get(lbl, [])
+            outgoing = out_edges.get(lbl, [])
+            div_incoming = div_edges.get(lbl, [])
+            # Pass vars directly instead of using .select
+            self._add_constraints_for_vertex(lbl, m, incoming, outgoing, div_incoming)
 
+        # penalty constraints
         if self.PENALIZE_FLOW:
-            # for each penalty var, find its flow var and constrain them
-            for var in penalty_flow:
-                penalty_var = penalty_flow[var]
-                flow_var = flow.select(var)[0]
-                m.addConstr(penalty_var >= flow_var - 1, f"penalty_{var[1]}-{var[2]}")
+            m.addConstrs(
+                (penalty_flow[k] >= flow[k] - 1 for k in penalty_flow.keys()),
+                name="penalty",
+            )
 
-        m.update()
         return m
 
-    def _add_constraints_for_vertex(self, v, model, flow_vars):
-        outgoing = flow_vars.select("*", v, "*")
-        incoming = flow_vars.select("*", "*", v)
-        div_incoming = flow_vars.select(
-            "*", Tracker.index_to_label(VirtualVertices.DIV.value), v
-        )
+    def _add_constraints_for_vertex(self, v, model, incoming, outgoing, div_incoming):
         if self.USE_DIV_CONSTRAINT:
             if not self.ALLOW_MERGES:
                 raise NotImplementedError(
@@ -899,3 +931,40 @@ class Tracker:
         edge_index, flow = zip(*[(k[0], v) for k, v in sol_dict.items()])
         all_edges.loc[list(edge_index), "flow"] = list(flow)
         return all_edges
+
+    def fix_edge_in_model(self, edge_index, u, v, lb=None, ub=None):
+        if self._model is None or self._all_edges is None:
+            raise ValueError("No existing model. Cannot fix edge.")
+        key = (edge_index, Tracker.index_to_label(u), Tracker.index_to_label(v))
+        var = self._model_flow_vars[key]
+        if lb is not None:
+            var.LB = lb
+        if ub is not None:
+            var.UB = ub
+
+    def add_vertex_to_model(
+        self,
+        vertex_label,
+        t,
+        location: Tuple[float, float] | Tuple[float, float, float],
+        new_id: int,
+        add_appearance: bool = True,
+        add_division: bool = True,
+        add_exit: bool = True,
+        add_migration: bool = True,
+    ):
+        if self._model is None or self._all_edges is None:
+            raise ValueError("No existing model. Cannot add vertex.")
+        # get scaled coords
+        scaled_location = tuple(
+            location[i] * self.scale[i] for i in range(len(location))
+        )
+        # needs to be added to all_vertices, all_edges, and model
+        # with costs as appropriate
+        enter_cost = (
+            dist_to_edge_cost_single(self._im_shape, scaled_location)
+            if add_appearance
+            else 0
+        )
+        exit_cost = enter_cost if add_exit else 0
+        # TODO div cost and migration costs
