@@ -8,6 +8,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import yaml
+import zarr
 from skimage.graph import central_pixel, pixel_graph
 from skimage.measure import regionprops_table
 from skimage.morphology import skeletonize
@@ -47,11 +48,11 @@ def load_tiff_frames(im_dir):
     first_im = imread(all_tiffs[0])
     shape = (len(all_tiffs), *first_im.shape)
     dtype = first_im.dtype
-    stack = np.zeros(shape=shape, dtype=dtype)
+    stack = zarr.zeros(shape=shape, dtype=dtype, chunks=(1,) + first_im.shape)
     stack[0] = first_im
 
     for i, f in enumerate(tqdm(all_tiffs[1:], "Loading TIFFs")):
-        imread(f, out=stack[i + 1])
+        stack[i + 1] = imread(f).astype(dtype, copy=False)
 
     return stack
 

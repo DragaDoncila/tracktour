@@ -85,3 +85,11 @@ def dist_to_edge_cost_func(im_shape, detections, location_keys):
     dist_to_borders = np.concatenate((dist_to_top_left, dist_to_bottom_right), axis=1)
     min_dists = np.min(dist_to_borders, axis=1)
     return min_dists
+
+
+def dist_to_edge_cost_single(im_shape, location):
+    dist_to_top_left = np.array(location)
+    dist_to_bottom_right = np.array(im_shape) - dist_to_top_left
+    dist_to_borders = np.concatenate((dist_to_top_left, dist_to_bottom_right), axis=0)
+    min_dist = np.min(dist_to_borders)
+    return min_dist
