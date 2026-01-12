@@ -17,6 +17,17 @@ from qtpy.QtWidgets import (
 )
 
 from ._graph_conversion_util import get_nxg_from_tracks, get_tracks_from_nxg
+from .track_annotator.commands import (
+    CompositeCommand,
+    EdgeAnnotationCommand,
+    MarkEdgeFPCommand,
+    MarkEdgeFPWithCorrectionCommand,
+    MarkEdgeFPWithSingleNodeCommand,
+    MarkEdgeTPCommand,
+    MarkNodeFPCommand,
+)
+from .track_annotator.controller import AnnotationController
+from .track_annotator.state import AnnotationState
 from .track_annotator.utils import (
     get_count_label_from_grid,
     get_counts_grid_layout,
@@ -59,26 +70,12 @@ class TrackAnnotator(QWidget):
         # initialize bits and pieces for tracking state
         self._viewer = viewer
         self._edge_sample_order = None
-        self._original_nxg = None
         self._current_display_idx = 0
-
-        self._gt_nxg = None
         self._points_layer_changed = False
 
-        # IDs into original nxg
-        self._tp_objects: set[int] = set()
-        self._fp_objects: set[int] = set()
-        self._tp_edges: set[tuple[int, int]] = set()
-        self._fp_edges: set[tuple[int, int]] = set()
-
-        # IDs into gt nxg
-        self._fn_objects: set[int] = set()
-        self._fn_edges: set[tuple[int, int]] = set()
-
-        # dict to track actions for undo
-        self._edge_actions: dict[
-            tuple[int, int], dict[str, int | tuple[int, int]]
-        ] = dict()
+        # Annotation state and controller (created when layers are selected)
+        self._state: AnnotationState = None
+        self._controller: AnnotationController = None
 
         # layer selection widgets
         self._seg_combo = create_widget(
@@ -169,14 +166,15 @@ class TrackAnnotator(QWidget):
             self._previous_edge_button.enabled = False
             return
 
-        # get a sample order going
+        # get original graph and create state/controller
         nxg = self._get_original_nxg()
+        self._state = AnnotationState(nxg)
+        self._controller = AnnotationController(self._state)
+
+        # get a sample order going
         self._edge_sample_order = np.random.RandomState(seed=0).permutation(
             np.asarray(nxg.edges)
         )
-
-        # start building a GT graph
-        self._gt_nxg = nx.DiGraph()
 
         # reset display index
         self._current_display_idx = 0
@@ -194,8 +192,6 @@ class TrackAnnotator(QWidget):
             raise ValueError("No tracks layer selected")
 
     def _get_original_nxg(self):
-        if self._original_nxg is not None:
-            return self._original_nxg
         tracks_layer = self._track_combo.value
         if "nxg" in tracks_layer.metadata:
             self._original_nxg = tracks_layer.metadata["nxg"]
@@ -298,7 +294,7 @@ class TrackAnnotator(QWidget):
         if current_edge_idx is None:
             current_edge_idx = self._current_display_idx
         current_edge = self._edge_sample_order[current_edge_idx]
-        nxg = self._get_original_nxg()
+        nxg = self._state.original_graph
         src_idx = current_edge[0]
         tgt_idx = current_edge[1]
         # locating the source and target nodes, ignoring track_id
@@ -364,7 +360,7 @@ class TrackAnnotator(QWidget):
         self._reset_to_original_button.enabled = False
 
     def _display_gt_edge(self, current_edge_idx):
-        edge_info = self._get_original_nxg().edges[
+        edge_info = self._state.original_graph.edges[
             self._edge_sample_order[current_edge_idx]
         ]
         original_src_loc, original_tgt_loc = self._get_edge_locs(current_edge_idx)
@@ -373,8 +369,8 @@ class TrackAnnotator(QWidget):
         # there's a gt edge we can display here, let's do that
         if "gt_src" in edge_info and "gt_tgt" in edge_info:
             gt_edge_idx = (edge_info["gt_src"], edge_info["gt_tgt"])
-            src_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[0]])
-            tgt_loc = get_loc_array(self._gt_nxg.nodes[gt_edge_idx[1]])
+            src_loc = get_loc_array(self._state.gt_graph.nodes[gt_edge_idx[0]])
+            tgt_loc = get_loc_array(self._state.gt_graph.nodes[gt_edge_idx[1]])
             if not np.allclose(src_loc, original_src_loc) or not np.allclose(
                 tgt_loc, original_tgt_loc
             ):
@@ -470,7 +466,7 @@ class TrackAnnotator(QWidget):
             self._current_display_idx += 1
         if (
             "seen"
-            in self._get_original_nxg().edges[
+            in self._state.original_graph.edges[
                 self._edge_sample_order[self._current_display_idx]
             ]
         ):
@@ -492,7 +488,7 @@ class TrackAnnotator(QWidget):
         self._current_display_idx -= 1
         if (
             "seen"
-            in self._get_original_nxg().edges[
+            in self._state.original_graph.edges[
                 self._edge_sample_order[self._current_display_idx]
             ]
         ):
@@ -525,81 +521,19 @@ class TrackAnnotator(QWidget):
             self._viewer.layers.remove(EDGE_FOCUS_VECTOR_NAME)
         self._points_layer_changed = False
 
-    def get_new_node_index(self, node_attrs):
-        """
-        Get new index for node, or index of existing node if it exists.
-        """
-        new_idx = max(self._gt_nxg.nodes) + 1 if len(self._gt_nxg.nodes) else 0
-        # if it was an FN node, we don't want to use its original index
-        if node_attrs.get(FN_NODE_ATTR, False):
-            # TODO: need to check here if this FN node hasn't already been added...
-            return new_idx
-        for node in self._gt_nxg.nodes:
-            if self._gt_nxg.nodes[node]["orig_idx"] == node_attrs["orig_idx"]:
-                return node
-        return new_idx
-
     def _get_original_matching_node(self, frame, label):
         """
         Get the original node index that matches the frame and label
         """
-        nxg = self._get_original_nxg()
+        nxg = self._state.original_graph
         for node in nxg.nodes:
             node_info = nxg.nodes[node]
             if node_info["t"] == frame and node_info["label"] == label:
                 return node
         raise ValueError(f"No node found with frame {frame} and label {label}")
 
-    def get_gt_node_attrs(self, node_points_idx):
-        nxg = self._get_original_nxg()
-        gt_node_attrs = {}
-
-        points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
-        original_src_loc, original_tgt_loc = self._get_edge_locs()
-        original_loc = (
-            original_src_loc
-            if points_layer.symbol[node_points_idx] == "disc"
-            else original_tgt_loc
-        )
-
-        annotated_loc = points_layer.data[node_points_idx]
-        annotated_loc = np.concatenate([[original_loc[0]], annotated_loc])
-
-        # check if either of the points are over blank space
-        annotated_point_seg_idx = get_int_loc(annotated_loc)
-        seg_layer = self._seg_combo.value
-        annotated_label = seg_layer.data[tuple(annotated_point_seg_idx)]
-        if annotated_label == 0:
-            # source was a previous FN
-            gt_node_attrs[FN_NODE_ATTR] = True
-            # give src a non-existent original index
-            gt_node_attrs["orig_idx"] = -1
-            # give src the location of the "added" point
-            gt_node_attrs.update(split_coords(annotated_loc))
-        else:
-            # mark the src TP
-            gt_node_attrs[TP_NODE_VOTES] = 1
-            # give src the location and index of the original point
-            node_frame = annotated_point_seg_idx[0]
-            orig_node_index = self._get_original_matching_node(
-                node_frame, annotated_label
-            )
-            gt_node_attrs["orig_idx"] = orig_node_index
-            gt_node_attrs.update(get_loc_dict(nxg.nodes[orig_node_index]))
-
-        return gt_node_attrs
-
-    def _add_node_with_attrs(self, node_attrs):
-        node_index = self.get_new_node_index(node_attrs)
-        if node_index in self._gt_nxg.nodes and TP_NODE_VOTES in node_attrs:
-            node_attrs[TP_NODE_VOTES] = (
-                self._gt_nxg.nodes[node_index][TP_NODE_VOTES] + 1
-            )
-        self._gt_nxg.add_nodes_from([(node_index, node_attrs)])
-        return node_index
-
     def _get_node_is_orphan(self, node_id):
-        nxg = self._get_original_nxg()
+        nxg = self._state.original_graph
         for in_edge in nxg.in_edges(node_id):
             if not nxg.edges[in_edge].get(FP_EDGE_ATTR, False):
                 return False
@@ -608,15 +542,208 @@ class TrackAnnotator(QWidget):
                 return False
         return True
 
-    def _handle_orphan_node(self, node_id, actions):
-        nxg = self._get_original_nxg()
-        if self._warn_on_orphan_node_checkbox.value:
-            # TODO: add actual warning
-            show_info("Orphan node detected. Marking as FP.")
-        actions["added_to_fpo"].append(node_id)
-        self._fp_objects.add(node_id)
-        nxg.nodes[node_id][FP_NODE_ATTR] = True
-        self._update_label_displays()
+    # === New helper methods for command-based refactoring ===
+
+    def _get_next_gt_node_id(self) -> int:
+        """Get the next available GT node ID."""
+        if len(self._state.gt_graph.nodes) == 0:
+            return 0
+        return max(self._state.gt_graph.nodes) + 1
+
+    def _find_existing_gt_node(self, orig_node_id: int) -> int | None:
+        """Find GT node that corresponds to orig_node_id, if it exists."""
+        for gt_node_id in self._state.gt_graph.nodes:
+            if self._state.gt_graph.nodes[gt_node_id].get("orig_idx") == orig_node_id:
+                return gt_node_id
+        return None
+
+    def _get_gt_node_info_for_command(
+        self, node_points_idx: int
+    ) -> tuple[int, dict, bool, int | None]:
+        """Extract node information for command building.
+
+        This method determines:
+        1. What GT node ID to use
+        2. The node's location attributes
+        3. Whether it's an FN (new detection) or TP
+        4. The original node ID (if TP)
+
+        Parameters
+        ----------
+        node_points_idx : int
+            Index into points layer data
+
+        Returns
+        -------
+        tuple of (gt_node_id, location_attrs, is_fn, orig_node_id)
+            gt_node_id: ID to use in GT graph
+            location_attrs: dict with t, y, x, (optionally z)
+            is_fn: True if this is a false negative (new detection)
+            orig_node_id: Original node ID if TP, None if FN
+        """
+        points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
+        original_src_loc, original_tgt_loc = self._get_edge_locs()
+        original_loc = (
+            original_src_loc
+            if points_layer.symbol[node_points_idx] == "disc"
+            else original_tgt_loc
+        )
+
+        # Get annotated location
+        annotated_loc = points_layer.data[node_points_idx]
+        annotated_loc = np.concatenate([[original_loc[0]], annotated_loc])
+
+        # Check what detection this point is over
+        annotated_point_seg_idx = get_int_loc(annotated_loc)
+        seg_layer = self._seg_combo.value
+        annotated_label = seg_layer.data[tuple(annotated_point_seg_idx)]
+
+        location_attrs = split_coords(annotated_loc)
+
+        if annotated_label == 0:
+            # FN: Point is over blank space (new detection)
+            # Need new GT node ID
+            gt_node_id = self._get_next_gt_node_id()
+            return (gt_node_id, location_attrs, True, None)
+        else:
+            # TP: Point is over a detection
+            node_frame = annotated_point_seg_idx[0]
+            orig_node_id = self._get_original_matching_node(node_frame, annotated_label)
+
+            # Check if this orig_node already has a GT node
+            gt_node_id = self._find_existing_gt_node(orig_node_id)
+            if gt_node_id is None:
+                # TODO: shouldn't this be a brand new ID?
+                gt_node_id = orig_node_id  # Use same ID for first occurrence
+
+            # Get location from original graph
+            nxg = self._state.original_graph
+            location_attrs = get_loc_dict(nxg.nodes[orig_node_id])
+
+            return (gt_node_id, location_attrs, False, orig_node_id)
+
+    def _check_for_orphan_nodes(self, edge: tuple[int, int]) -> list[int]:
+        """Check which nodes from edge are now orphaned.
+
+        Returns list of orphaned node IDs.
+        """
+        orphans = []
+        if self._get_node_is_orphan(edge[0]):
+            orphans.append(edge[0])
+        if self._get_node_is_orphan(edge[1]):
+            orphans.append(edge[1])
+        return orphans
+
+    # === Command builder methods ===
+
+    def _build_tp_edge_command(
+        self,
+        orig_edge: tuple[int, int],
+        src_loc: np.ndarray,
+        tgt_loc: np.ndarray,
+    ) -> EdgeAnnotationCommand:
+        """Build command for TP edge (both points unchanged)."""
+        # Use same GT IDs as original IDs for TP
+        gt_edge = orig_edge
+        src_location = split_coords(src_loc)
+        tgt_location = split_coords(tgt_loc)
+
+        return MarkEdgeTPCommand(
+            orig_edge=orig_edge,
+            gt_edge=gt_edge,
+            src_location=src_location,
+            tgt_location=tgt_location,
+        )
+
+    def _build_fp_with_correction_command(
+        self,
+        orig_edge: tuple[int, int],
+        src_idx: int,
+        tgt_idx: int,
+    ) -> EdgeAnnotationCommand:
+        """Build command for FP edge with corrected FN edge."""
+        # Extract GT node info (includes determining GT IDs)
+        gt_src_id, src_loc, src_is_fn, src_orig_id = self._get_gt_node_info_for_command(
+            src_idx
+        )
+        gt_tgt_id, tgt_loc, tgt_is_fn, tgt_orig_id = self._get_gt_node_info_for_command(
+            tgt_idx
+        )
+
+        # Create main command
+        main_cmd = MarkEdgeFPWithCorrectionCommand(
+            orig_edge=orig_edge,
+            gt_edge=(gt_src_id, gt_tgt_id),
+            src_location=src_loc,
+            tgt_location=tgt_loc,
+            src_is_fn=src_is_fn,
+            tgt_is_fn=tgt_is_fn,
+            src_orig_id=src_orig_id,
+            tgt_orig_id=tgt_orig_id,
+        )
+
+        # Check for orphan nodes
+        orphans = self._check_for_orphan_nodes(orig_edge)
+
+        if orphans:
+            # Wrap in composite command
+            commands = [main_cmd]
+            for orphan_id in orphans:
+                if self._warn_on_orphan_node_checkbox.value:
+                    show_info("Orphan node detected. Marking as FP.")
+                commands.append(MarkNodeFPCommand(orphan_id))
+            return CompositeCommand(commands)
+        else:
+            return main_cmd
+
+    def _build_single_point_command(
+        self, orig_edge: tuple[int, int]
+    ) -> EdgeAnnotationCommand:
+        """Build command for single remaining point."""
+        points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
+        src_present = points_layer.symbol[0] == "disc"
+
+        # Get GT node info for remaining point
+        gt_node_id, location, is_fn, orig_id = self._get_gt_node_info_for_command(0)
+
+        # Note: Single point should never be FN (we validated it hasn't moved)
+        assert not is_fn, "Single remaining point should be TP"
+
+        main_cmd = MarkEdgeFPWithSingleNodeCommand(
+            orig_edge=orig_edge,
+            gt_node_id=gt_node_id,
+            remaining_orig_id=orig_id,
+            location=location,
+            src_present=src_present,
+        )
+
+        # Check for orphan
+        orphan_id = orig_edge[1] if src_present else orig_edge[0]
+        if self._get_node_is_orphan(orphan_id):
+            if self._warn_on_orphan_node_checkbox.value:
+                show_info("Orphan node detected. Marking as FP.")
+            return CompositeCommand([main_cmd, MarkNodeFPCommand(orphan_id)])
+        else:
+            return main_cmd
+
+    def _build_no_points_command(
+        self, orig_edge: tuple[int, int]
+    ) -> EdgeAnnotationCommand:
+        """Build command for deleted edge (no points)."""
+        main_cmd = MarkEdgeFPCommand(orig_edge)
+
+        # Check both nodes for orphans
+        orphans = self._check_for_orphan_nodes(orig_edge)
+
+        if orphans:
+            commands = [main_cmd]
+            for orphan_id in orphans:
+                if self._warn_on_orphan_node_checkbox.value:
+                    show_info("Orphan node detected. Marking as FP.")
+                commands.append(MarkNodeFPCommand(orphan_id))
+            return CompositeCommand(commands)
+        else:
+            return main_cmd
 
     def _save_edge_annotation(self):
         seg = self._seg_combo.value.data
@@ -626,7 +753,6 @@ class TrackAnnotator(QWidget):
         original_src_label = seg[tuple(get_int_loc(original_src_loc))]
         original_tgt_label = seg[tuple(get_int_loc(original_tgt_loc))]
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
-        nxg = self._get_original_nxg()
 
         has_two_original_points = False
         num_points = len(points_layer.data)
@@ -682,192 +808,66 @@ class TrackAnnotator(QWidget):
                 show_info("Both points have changed. Resetting edge.")
                 return False
 
-        # points layer didn't change and we've seen it before, nothing to do
-        if (not self._points_layer_changed) and "seen" in nxg.edges[original_edge]:
-            print("No changes on seen edge")
+        # Early exit if no changes on seen edge
+        if (not self._points_layer_changed) and self._controller.is_edge_annotated(
+            original_edge
+        ):
             return True
-        # if we've seen the edge before and there's been changes, we need to undo
-        if "seen" in nxg.edges[original_edge] and self._points_layer_changed:
-            print("undoing edge actions")
-            self._undo_edge_actions(original_edge)
 
-        actions = {
-            "added_to_fpo": [],
-            "added_to_fno": [],
-            "added_to_tpo": [],
-            "added_to_tpe": [],
-            "added_to_fne": [],
-            "added_to_fpe": [],
-        }
-        # save the edge
+        # Build appropriate command based on scenario
         if num_points == 2:
+            src_idx, tgt_idx = get_src_tgt_idx(points_layer.symbol)
             if has_two_original_points:
-                # this is a TP edge
-                gt_edge_attr = {TP_EDGE_ATTR: True}
-                self._tp_edges.add(original_edge)
-                actions["added_to_tpe"].append(original_edge)
-                self._tp_objects.update({original_edge[0], original_edge[1]})
-                actions["added_to_tpo"].extend([original_edge[0], original_edge[1]])
+                # Scenario 1: TP Edge
+                command = self._build_tp_edge_command(
+                    original_edge, original_src_loc, original_tgt_loc
+                )
             else:
-                # one of the points must have moved, we have an FP/FN edge
-                nxg.edges[original_edge][FP_EDGE_ATTR] = True
-                gt_edge_attr = {FN_EDGE_ATTR: True}
-                self._fp_edges.add(original_edge)
-                actions["added_to_fpe"].append(original_edge)
-                src_orphan = self._get_node_is_orphan(original_edge[0])
-                tgt_orphan = self._get_node_is_orphan(original_edge[1])
-                if src_orphan:
-                    self._handle_orphan_node(original_edge[0], actions)
-                if tgt_orphan:
-                    self._handle_orphan_node(original_edge[1], actions)
-
-            # add the GT edge
-            gt_src_attrs = self.get_gt_node_attrs(src_idx)
-            gt_tgt_attrs = self.get_gt_node_attrs(tgt_idx)
-            # add nodes with new indices, add edge
-            src_index = self._add_node_with_attrs(gt_src_attrs)
-            tgt_index = self._add_node_with_attrs(gt_tgt_attrs)
-            self._gt_nxg.add_edge(src_index, tgt_index, **gt_edge_attr)
-            if FN_NODE_ATTR in gt_src_attrs:
-                self._fn_objects.add(src_index)
-                actions["added_to_fno"].append(src_index)
-            elif TP_NODE_VOTES in gt_src_attrs:
-                self._tp_objects.add(gt_src_attrs["orig_idx"])
-                actions["added_to_tpo"].append(gt_src_attrs["orig_idx"])
-            if FN_NODE_ATTR in gt_tgt_attrs:
-                self._fn_objects.add(tgt_index)
-                actions["added_to_fno"].append(tgt_index)
-            elif TP_NODE_VOTES in gt_tgt_attrs:
-                self._tp_objects.add(gt_tgt_attrs["orig_idx"])
-                actions["added_to_tpo"].append(gt_tgt_attrs["orig_idx"])
-            if FN_EDGE_ATTR in gt_edge_attr:
-                self._fn_edges.add((src_index, tgt_index))
-                actions["added_to_fne"].append((src_index, tgt_index))
-            # update the original nxg with the GT edge index
-            nxg.edges[original_edge]["gt_src"] = src_index
-            nxg.edges[original_edge]["gt_tgt"] = tgt_index
+                # Scenario 2: FP/FN Edge with correction
+                command = self._build_fp_with_correction_command(
+                    original_edge, src_idx, tgt_idx
+                )
         elif num_points == 1:
-            # this is an FP edge and we only have a single point left
-            nxg.edges[original_edge][FP_EDGE_ATTR] = True
-            self._fp_edges.add(original_edge)
-            actions["added_to_fpe"].append(original_edge)
-            # need to be able to restore this point/lack of points if we come back to this
-            # edge, so store whether the source or the target remains
-            nxg.edges[original_edge]["src_present"] = False
-            nxg.edges[original_edge]["tgt_present"] = False
-            src_orphan = False
-            tgt_orphan = False
-            if points_layer.symbol[0] == "disc":
-                nxg.edges[original_edge]["src_present"] = True
-                tgt_orphan = self._get_node_is_orphan(original_edge[1])
-            else:
-                nxg.edges[original_edge]["tgt_present"] = True
-                src_orphan = self._get_node_is_orphan(original_edge[0])
-            # add node to GT with increased vote
-            gt_node_attrs = self.get_gt_node_attrs(0)
-            # we've already checked the remaining point hasn't moved, so we can just add here
-            # as TP
-            self._add_node_with_attrs(gt_node_attrs)
-            self._tp_objects.add(gt_node_attrs["orig_idx"])
-            actions["added_to_tpo"].append(gt_node_attrs["orig_idx"])
-            if src_orphan:
-                self._handle_orphan_node(original_edge[0], actions)
-            if tgt_orphan:
-                self._handle_orphan_node(original_edge[1], actions)
+            # Scenario 3: Single point
+            command = self._build_single_point_command(original_edge)
         elif num_points == 0:
-            # this is just an FP edge, can't add any nodes
-            nxg.edges[original_edge][FP_EDGE_ATTR] = True
-            self._fp_edges.add(original_edge)
-            actions["added_to_fpe"].append(original_edge)
-            src_orphan = self._get_node_is_orphan(original_edge[0])
-            tgt_orphan = self._get_node_is_orphan(original_edge[1])
-            if src_orphan:
-                self._handle_orphan_node(original_edge[0], actions)
-            if tgt_orphan:
-                self._handle_orphan_node(original_edge[1], actions)
+            # Scenario 4: No points
+            command = self._build_no_points_command(original_edge)
 
-        # mark this edge as seen
-        self._edge_actions[original_edge] = actions
-        self._update_label_displays()
-        nxg.edges[original_edge]["seen"] = True
-        self._points_layer_changed = False
-        return True
-
-    def _undo_edge_actions(self, edge):
-        prior_actions = self._edge_actions[edge]
-        nxg = self._get_original_nxg()
-        if len(prior_actions["added_to_fpe"]):
-            for prior_fp_edge in prior_actions["added_to_fpe"]:
-                self._fp_edges.remove(prior_fp_edge)
-                nxg.edges[prior_fp_edge].pop(FP_EDGE_ATTR, None)
-                nxg.edges[prior_fp_edge].pop("gt_src", None)
-                nxg.edges[prior_fp_edge].pop("gt_tgt", None)
-                nxg.edges[prior_fp_edge].pop("src_present", None)
-                nxg.edges[prior_fp_edge].pop("tgt_present", None)
-        if len(prior_actions["added_to_fne"]):
-            for prior_fn_edge in prior_actions["added_to_fne"]:
-                self._fn_edges.remove(prior_fn_edge)
-                self._gt_nxg.remove_edge(*prior_fn_edge)
-        if len(prior_actions["added_to_tpe"]):
-            for prior_tp_edge in prior_actions["added_to_tpe"]:
-                self._tp_edges.remove(prior_tp_edge)
-                nxg.edges[prior_tp_edge].pop(TP_EDGE_ATTR, None)
-                gt_src = nxg.edges[prior_tp_edge].pop("gt_src", None)
-                gt_tgt = nxg.edges[prior_tp_edge].pop("gt_tgt", None)
-                if gt_src is not None and gt_tgt is not None:
-                    self._gt_nxg.remove_edge(gt_src, gt_tgt)
-        if len(prior_actions["added_to_fno"]):
-            for prior_fn_node in prior_actions["added_to_fno"]:
-                self._fn_objects.remove(prior_fn_node)
-                self._gt_nxg.remove_node(prior_fn_node)
-        if len(prior_actions["added_to_tpo"]):
-            marked_tp_nodes = set(prior_actions["added_to_tpo"])
-            # go through gt graph and remove any nodes matching
-            # original indices in the tp set
-            to_remove_gt = []
-            to_remove_sol = set()
-            for node in self._gt_nxg.nodes:
-                if (
-                    TP_NODE_VOTES in self._gt_nxg.nodes[node]
-                    and self._gt_nxg.nodes[node].get("orig_idx", None)
-                    in marked_tp_nodes
-                ):
-                    self._gt_nxg.nodes[node][TP_NODE_VOTES] -= 1
-                    if self._gt_nxg.nodes[node][TP_NODE_VOTES] <= 0:
-                        to_remove_gt.append(node)
-                        to_remove_sol.add(self._gt_nxg.nodes[node]["orig_idx"])
-            self._gt_nxg.remove_nodes_from(to_remove_gt)
-            self._tp_objects.difference_update(to_remove_sol)
-        if len(prior_actions["added_to_fpo"]):
-            for prior_fp_node in prior_actions["added_to_fpo"]:
-                self._fp_objects.remove(prior_fp_node)
-                nxg.nodes[prior_fp_node].pop(FP_NODE_ATTR, None)
-        self._update_label_displays()
+        # Execute command via controller
+        try:
+            self._controller.annotate_edge(original_edge, command)
+            self._update_label_displays()
+            self._points_layer_changed = False
+            return True
+        except Exception as e:
+            show_info(f"Failed to save annotation: {e}")
+            return False
 
     def _update_label_displays(self):
         get_count_label_from_grid(self._counts_grid_layout, "TPO").setText(
-            str(len(self._tp_objects))
+            str(len(self._state.tp_objects))
         )
         get_count_label_from_grid(self._counts_grid_layout, "FPO").setText(
-            str(len(self._fp_objects))
+            str(len(self._state.fp_objects))
         )
         get_count_label_from_grid(self._counts_grid_layout, "FNO").setText(
-            str(len(self._fn_objects))
+            str(len(self._state.fn_objects))
         )
         get_count_label_from_grid(self._counts_grid_layout, "TPT").setText(
-            str(len(self._tp_edges))
+            str(len(self._state.tp_edges))
         )
         get_count_label_from_grid(self._counts_grid_layout, "FPT").setText(
-            str(len(self._fp_edges))
+            str(len(self._state.fp_edges))
         )
         get_count_label_from_grid(self._counts_grid_layout, "FNT").setText(
-            str(len(self._fn_edges))
+            str(len(self._state.fn_edges))
         )
 
     def _reset_current_edge(self):
         if (
             "seen"
-            in self._get_original_nxg().edges[
+            in self._state.original_graph.edges[
                 self._edge_sample_order[self._current_display_idx]
             ]
         ):
@@ -878,22 +878,24 @@ class TrackAnnotator(QWidget):
     def _reset_to_original_edge(self):
         original_edge = self._edge_sample_order[self._current_display_idx]
         original_edge = (int(original_edge[0]), int(original_edge[1]))
-        self._get_original_nxg().edges[original_edge].pop("seen", None)
-        self._undo_edge_actions(original_edge)
+        # Use controller to reset the edge
+        self._controller.reset_edge_to_original(original_edge)
+        # Update display
+        self._update_label_displays()
         self._display_edge(self._current_display_idx)
         self._reset_to_original_button.enabled = False
         self._edge_status_label.setText("New")
 
     def _add_ground_truth_tracks(self):
         if (
-            self._gt_nxg is None
-            or len(self._gt_nxg.nodes) == 0
-            or len(self._gt_nxg.edges) == 0
+            self._state is None
+            or len(self._state.gt_graph.nodes) == 0
+            or len(self._state.gt_graph.edges) == 0
         ):
             show_info("No ground truth tracks to display. Try annotating some edges!")
             return
         seg_layer_scale = self._seg_combo.value.scale
-        tracks = get_tracks_from_nxg(self._gt_nxg)
+        tracks = get_tracks_from_nxg(self._state.gt_graph)
         tracks.name = GT_TRACKS_NAME
         tracks.scale = seg_layer_scale
         if GT_TRACKS_NAME in self._viewer.layers:
@@ -907,9 +909,9 @@ class TrackAnnotator(QWidget):
     def _save_annotated_graphs(self):
         dir_path = self._export_path.value
         if (
-            self._gt_nxg is None
-            or len(self._gt_nxg.nodes) == 0
-            or len(self._gt_nxg.edges) == 0
+            self._state is None
+            or len(self._state.gt_graph.nodes) == 0
+            or len(self._state.gt_graph.edges) == 0
         ):
             show_info("Nothing so save. Try annotating some edges!")
             return
@@ -926,12 +928,12 @@ class TrackAnnotator(QWidget):
                 dir_path, f"{OUT_SOL_GRAPH_NAME}_{num_saved}.graphml"
             )
         # delete and then restore color_array to avoid error in saving
-        sol_nxg = self._get_original_nxg()
+        sol_nxg = self._state.original_graph
         colors = {
             node: sol_nxg.nodes[node].pop("color", None) for node in sol_nxg.nodes
         }
 
-        nx.write_graphml(self._gt_nxg, gt_path)
-        nx.write_graphml(self._get_original_nxg(), sol_path)
+        nx.write_graphml(self._state.gt_graph, gt_path)
+        nx.write_graphml(self._state.original_graph, sol_path)
         nx.set_node_attributes(sol_nxg, colors, "color")
         print("Saved")
