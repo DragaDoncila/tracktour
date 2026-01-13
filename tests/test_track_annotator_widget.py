@@ -9,6 +9,10 @@ import numpy as np
 import pytest
 
 from tracktour._napari.track_annotator import TrackAnnotator
+from tracktour._napari.track_annotator.widget import (
+    EDGE_FOCUS_POINT_NAME,
+    EDGE_FOCUS_VECTOR_NAME,
+)
 
 
 @pytest.fixture
@@ -146,8 +150,8 @@ class TestWidgetInitialization:
 
         layer_names = [layer.name for layer in viewer.layers]
 
-        assert "Source Target" in layer_names
-        assert "Current Edge" in layer_names
+        assert EDGE_FOCUS_POINT_NAME in layer_names
+        assert EDGE_FOCUS_VECTOR_NAME in layer_names
 
 
 class TestEdgeNavigation:
