@@ -6,12 +6,8 @@ import pytest
 from tracktour._napari.track_annotator.commands import (
     MarkEdgeFPCommand,
     MarkEdgeTPCommand,
-    MarkNodeFPCommand,
 )
-from tracktour._napari.track_annotator.controller import (
-    AnnotationController,
-    AnnotationError,
-)
+from tracktour._napari.track_annotator.controller import AnnotationController
 from tracktour._napari.track_annotator.state import AnnotationState
 
 

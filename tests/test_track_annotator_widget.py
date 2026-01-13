@@ -107,7 +107,9 @@ def viewer_with_layers(
     # Store the graph in layer metadata (this is what the widget expects)
     tracks_layer.metadata["nxg"] = simple_graph
 
-    return viewer, seg_layer, tracks_layer, simple_graph
+    yield viewer, seg_layer, tracks_layer, simple_graph
+
+    viewer.close()
 
 
 @pytest.fixture

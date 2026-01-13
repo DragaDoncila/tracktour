@@ -10,12 +10,6 @@ from .commands import EdgeAnnotationCommand
 from .state import AnnotationState
 
 
-class AnnotationError(Exception):
-    """Raised when an annotation operation fails validation."""
-
-    pass
-
-
 class AnnotationController:
     """Manages track annotation operations with per-edge undo support.
 
@@ -57,22 +51,14 @@ class AnnotationController:
             Edge to annotate
         command : EdgeAnnotationCommand
             Command to execute
-
-        Raises
-        ------
-        AnnotationError
-            If the command execution fails
         """
         # If edge was previously annotated, undo it first
         if edge in self.edge_commands:
             self.edge_commands[edge].undo(self.state)
 
         # Execute the new command
-        try:
-            command.execute(self.state)
-            self.edge_commands[edge] = command
-        except Exception as e:
-            raise AnnotationError(f"Failed to annotate edge {edge}: {e}") from e
+        command.execute(self.state)
+        self.edge_commands[edge] = command
 
     def reset_edge_to_original(self, edge: tuple[int, int]) -> bool:
         """Reset a specific edge to its original state.
