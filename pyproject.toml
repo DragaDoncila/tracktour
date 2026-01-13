@@ -58,10 +58,10 @@ packages = ["src"]
 [project.optional-dependencies]
 napari = [
     "arboretum",
-    "napari",
+    "napari[all]",
     "napari-graph",
 ]
-test = ["pytest>=6.0", "napari"]
+test = ["pytest>=6.0", "napari[all,testing]"]
 dev = ["pre-commit"]
 
 [project.urls]
