@@ -6,18 +6,10 @@ import networkx as nx
 import numpy as np
 from magicgui.widgets import FileEdit, PushButton, create_widget
 from napari.utils.notifications import show_info
-from qtpy.QtWidgets import (
-    QFrame,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QSizePolicy,
-    QVBoxLayout,
-    QWidget,
-)
+from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ._graph_conversion_util import get_nxg_from_tracks, get_tracks_from_nxg
-from .track_annotator.commands import (
+from .._graph_conversion_util import get_nxg_from_tracks, get_tracks_from_nxg
+from .commands import (
     CompositeCommand,
     EdgeAnnotationCommand,
     MarkEdgeFPCommand,
@@ -26,9 +18,9 @@ from .track_annotator.commands import (
     MarkEdgeTPCommand,
     MarkNodeFPCommand,
 )
-from .track_annotator.controller import AnnotationController
-from .track_annotator.state import AnnotationState
-from .track_annotator.utils import (
+from .controller import AnnotationController
+from .state import AnnotationState
+from .utils import (
     get_count_label_from_grid,
     get_counts_grid_layout,
     get_int_loc,
