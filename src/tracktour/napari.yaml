@@ -11,7 +11,7 @@ contributions:
       python_name: tracktour._napari._solver:TrackingSolver
     - id: tracktour.track_annotator
       title: Annotate Solved Tracks...
-      python_name: tracktour._napari._track_editor:TrackAnnotator
+      python_name: tracktour._napari.track_annotator:TrackAnnotator
     - id: tracktour.annotate_gt
       title: Annotate Ground Truth...
       python_name: tracktour._napari._gt_annotator:GroundTruthAnnotator

@@ -27,6 +27,7 @@ dependencies = [
     "tifffile", # maybe should be optional?
     "typer",
     "tqdm",
+    "zarr"
 ]
 classifiers = [
   "Intended Audience :: Science/Research",
@@ -57,10 +58,10 @@ packages = ["src"]
 [project.optional-dependencies]
 napari = [
     "arboretum",
-    "napari",
+    "napari[all]",
     "napari-graph",
 ]
-test = ["pytest>=6.0", "napari"]
+test = ["pytest>=6.0", "napari[all,testing]"]
 dev = ["pre-commit"]
 
 [project.urls]

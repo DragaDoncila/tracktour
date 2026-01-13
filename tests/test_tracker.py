@@ -308,6 +308,7 @@ def test_to_gurobi_model(human_detections, use_div_constraint):
     detections["exit_cost"] = enter_exit_cost
     detections["div_cost"] = div_cost
     m, _, _, _ = tracker._to_gurobi_model(detections, edges, "t", ("y", "x"))
+    m.update()
     # assert that we have a flow conserv & demand constraint for each detection
     constr_names = [constr.ConstrName for constr in m.getConstrs()]
     num_detections = len(detections)
