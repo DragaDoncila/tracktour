@@ -19,6 +19,7 @@ from .commands import (
     MarkNodeFPCommand,
 )
 from .controller import AnnotationController
+from .samplers import RandomEdgeSampler
 from .state import AnnotationState
 from .utils import (
     get_count_label_from_grid,
@@ -61,8 +62,7 @@ class TrackAnnotator(QWidget):
 
         # initialize bits and pieces for tracking state
         self._viewer = viewer
-        self._edge_sample_order = None
-        self._current_display_idx = 0
+        self._edge_sampler = None
         self._points_layer_changed = False
 
         # Annotation state and controller (created when layers are selected)
@@ -163,14 +163,9 @@ class TrackAnnotator(QWidget):
         self._state = AnnotationState(nxg)
         self._controller = AnnotationController(self._state)
 
-        # get a sample order going
-        self._edge_sample_order = np.random.RandomState(seed=0).permutation(
-            np.asarray(nxg.edges)
-        )
-
-        # reset display index
-        self._current_display_idx = 0
-        self._display_edge(self._current_display_idx)
+        # create edge sampler
+        self._edge_sampler = RandomEdgeSampler(list(nxg.edges), seed=0)
+        self._display_edge()
 
         self._next_edge_button.enabled = True
 
@@ -282,14 +277,11 @@ class TrackAnnotator(QWidget):
             self._viewer.window.qt_viewer.dims.setFocus()
         self._viewer.layers.selection.active = point_focus_layer
 
-    def _get_edge_locs(self, current_edge_idx=None):
-        if current_edge_idx is None:
-            current_edge_idx = self._current_display_idx
-        current_edge = self._edge_sample_order[current_edge_idx]
+    def _get_edge_locs(self):
+        current_edge = self._edge_sampler.current()
         nxg = self._state.original_graph
         src_idx = current_edge[0]
         tgt_idx = current_edge[1]
-        # locating the source and target nodes, ignoring track_id
         src_loc = get_loc_array(nxg.nodes[src_idx])
         tgt_loc = get_loc_array(nxg.nodes[tgt_idx])
         return src_loc, tgt_loc
@@ -342,20 +334,19 @@ class TrackAnnotator(QWidget):
             if EDGE_FOCUS_VECTOR_NAME in self._viewer.layers:
                 self._viewer.layers[EDGE_FOCUS_VECTOR_NAME].data = []
 
-    def _display_edge(self, current_edge_idx):
+    def _display_edge(self):
         current_scale = self._seg_combo.value.scale[1:]
-        src_loc, tgt_loc = self._get_edge_locs(current_edge_idx)
+        src_loc, tgt_loc = self._get_edge_locs()
         # bbox = self._get_region_bbox(src_loc, tgt_loc)
         self._add_current_edge_focus_point(src_loc, tgt_loc)
         self._setup_display_options(src_loc, tgt_loc, current_scale)
         self._edge_status_label.setText("New")
         self._reset_to_original_button.enabled = False
 
-    def _display_gt_edge(self, current_edge_idx):
-        edge_info = self._state.original_graph.edges[
-            self._edge_sample_order[current_edge_idx]
-        ]
-        original_src_loc, original_tgt_loc = self._get_edge_locs(current_edge_idx)
+    def _display_gt_edge(self):
+        current_edge = self._edge_sampler.current()
+        edge_info = self._state.original_graph.edges[current_edge]
+        original_src_loc, original_tgt_loc = self._get_edge_locs()
         current_scale = self._seg_combo.value.scale[1:]
         edge_label = "Seen"
         # there's a gt edge we can display here, let's do that
@@ -450,51 +441,36 @@ class TrackAnnotator(QWidget):
 
     def _display_next_edge(self):
         edge_saved = self._save_edge_annotation()
-        if self._current_display_idx == len(self._edge_sample_order) - 1:
+        if self._edge_sampler.at_end():
             self._finish_annotating()
             return
 
         if edge_saved:
-            self._current_display_idx += 1
-        if (
-            "seen"
-            in self._state.original_graph.edges[
-                self._edge_sample_order[self._current_display_idx]
-            ]
-        ):
-            self._display_gt_edge(self._current_display_idx)
-        else:
-            self._display_edge(self._current_display_idx)
+            self._edge_sampler.next()
 
-        # next button needs to be enabled current edge is not the last edge
-        self._next_edge_button.enabled = self._current_display_idx < len(
-            self._edge_sample_order
-        )
-        if self._current_display_idx == len(self._edge_sample_order) - 1:
+        current_edge = self._edge_sampler.current()
+        if "seen" in self._state.original_graph.edges[current_edge]:
+            self._display_gt_edge()
+        else:
+            self._display_edge()
+
+        self._next_edge_button.enabled = True
+        if self._edge_sampler.at_end():
             self._next_edge_button.text = "Save && Finish"
 
-        # previous button needs to be enabled if current edge is not the first edge
-        self._previous_edge_button.enabled = self._current_display_idx > 0
+        self._previous_edge_button.enabled = not self._edge_sampler.at_start()
 
     def _display_previous_edge(self):
-        self._current_display_idx -= 1
-        if (
-            "seen"
-            in self._state.original_graph.edges[
-                self._edge_sample_order[self._current_display_idx]
-            ]
-        ):
-            self._display_gt_edge(self._current_display_idx)
-        else:
-            self._display_edge(self._current_display_idx)
-        self._next_edge_button.enabled = True
+        self._edge_sampler.previous()
 
-        # next button needs to be enabled current edge is not the last edge
-        self._next_edge_button.enabled = (
-            self._current_display_idx < len(self._edge_sample_order) - 1
-        )
-        # previous button needs to be enabled if current edge is not the first edge
-        self._previous_edge_button.enabled = self._current_display_idx > 0
+        current_edge = self._edge_sampler.current()
+        if "seen" in self._state.original_graph.edges[current_edge]:
+            self._display_gt_edge()
+        else:
+            self._display_edge()
+
+        self._next_edge_button.enabled = True
+        self._previous_edge_button.enabled = not self._edge_sampler.at_start()
 
     def _finish_annotating(self):
         self._next_edge_button.enabled = False
@@ -739,8 +715,7 @@ class TrackAnnotator(QWidget):
 
     def _save_edge_annotation(self):
         seg = self._seg_combo.value.data
-        original_edge = self._edge_sample_order[self._current_display_idx]
-        original_edge = (int(original_edge[0]), int(original_edge[1]))
+        original_edge = self._edge_sampler.current()
         original_src_loc, original_tgt_loc = self._get_edge_locs()
         original_src_label = seg[tuple(get_int_loc(original_src_loc))]
         original_tgt_label = seg[tuple(get_int_loc(original_tgt_loc))]
@@ -857,24 +832,19 @@ class TrackAnnotator(QWidget):
         )
 
     def _reset_current_edge(self):
-        if (
-            "seen"
-            in self._state.original_graph.edges[
-                self._edge_sample_order[self._current_display_idx]
-            ]
-        ):
-            self._display_gt_edge(self._current_display_idx)
+        current_edge = self._edge_sampler.current()
+        if "seen" in self._state.original_graph.edges[current_edge]:
+            self._display_gt_edge()
         else:
-            self._display_edge(self._current_display_idx)
+            self._display_edge()
 
     def _reset_to_original_edge(self):
-        original_edge = self._edge_sample_order[self._current_display_idx]
-        original_edge = (int(original_edge[0]), int(original_edge[1]))
+        original_edge = self._edge_sampler.current()
         # Use controller to reset the edge
         self._controller.reset_edge_to_original(original_edge)
         # Update display
         self._update_label_displays()
-        self._display_edge(self._current_display_idx)
+        self._display_edge()
         self._reset_to_original_button.enabled = False
         self._edge_status_label.setText("New")
 

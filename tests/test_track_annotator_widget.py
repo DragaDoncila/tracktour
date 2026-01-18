@@ -163,16 +163,16 @@ class TestEdgeNavigation:
         """Test that widget can display the first edge."""
         widget = widget_with_setup
 
-        assert widget._current_display_idx >= 0
-        assert widget._edge_sample_order is not None
-        assert len(widget._edge_sample_order) == 4
+        assert widget._edge_sampler.current_index() >= 0
+        assert widget._edge_sampler is not None
+        assert widget._edge_sampler.total_count() == 4
 
     def test_navigation_updates_camera_center(self, widget_with_setup, simple_graph):
         """Test that camera centers on the edge when navigating."""
         widget = widget_with_setup
         viewer = widget._viewer
 
-        first_edge = widget._edge_sample_order[0]
+        first_edge = widget._edge_sampler.current()
         src_node, tgt_node = first_edge
         src_data = simple_graph.nodes[src_node]
         tgt_data = simple_graph.nodes[tgt_node]
@@ -186,7 +186,7 @@ class TestEdgeNavigation:
 
         widget._next_edge_button.clicked()
 
-        second_edge = widget._edge_sample_order[1]
+        second_edge = widget._edge_sampler.current()
         src_node2, tgt_node2 = second_edge
         src_data2 = simple_graph.nodes[src_node2]
         tgt_data2 = simple_graph.nodes[tgt_node2]
@@ -203,7 +203,7 @@ class TestEdgeNavigation:
         widget = widget_with_setup
         points_layer = widget._viewer.layers[EDGE_FOCUS_POINT_NAME]
 
-        current_edge = tuple(widget._edge_sample_order[widget._current_display_idx])
+        current_edge = widget._edge_sampler.current()
         src_node, tgt_node = current_edge
         src_data = simple_graph.nodes[src_node]
         tgt_data = simple_graph.nodes[tgt_node]
@@ -231,7 +231,7 @@ class TestEdgeNavigation:
 
         widget._next_edge_button.clicked()
 
-        next_edge = tuple(widget._edge_sample_order[widget._current_display_idx])
+        next_edge = widget._edge_sampler.current()
         src_node_next, tgt_node_next = next_edge
         src_data_next = simple_graph.nodes[src_node_next]
         tgt_data_next = simple_graph.nodes[tgt_node_next]
@@ -258,7 +258,7 @@ class TestEdgeNavigation:
         widget = widget_with_setup
         vectors_layer = widget._viewer.layers[EDGE_FOCUS_VECTOR_NAME]
 
-        current_edge = tuple(widget._edge_sample_order[widget._current_display_idx])
+        current_edge = widget._edge_sampler.current()
         src_node, tgt_node = current_edge
         src_data = simple_graph.nodes[src_node]
         tgt_data = simple_graph.nodes[tgt_node]
@@ -287,51 +287,44 @@ class TestEdgeNavigation:
     def test_next_button_advances_edge(self, widget_with_setup):
         """Test that clicking next button advances to next edge."""
         widget = widget_with_setup
-        initial_idx = widget._current_display_idx
+        initial_idx = widget._edge_sampler.current_index()
 
         widget._next_edge_button.clicked()
 
-        assert widget._current_display_idx == initial_idx + 1
+        assert widget._edge_sampler.current_index() == initial_idx + 1
 
     def test_previous_button_goes_back(self, widget_with_setup):
         """Test that clicking previous button goes to previous edge."""
         widget = widget_with_setup
 
         widget._next_edge_button.clicked()
-        current_idx = widget._current_display_idx
+        current_idx = widget._edge_sampler.current_index()
 
         widget._previous_edge_button.clicked()
 
-        assert widget._current_display_idx == current_idx - 1
+        assert widget._edge_sampler.current_index() == current_idx - 1
 
     def test_navigation_buttons_disabled_at_boundaries(self, widget_with_setup):
         """Test that navigation buttons are properly disabled at boundaries."""
         widget = widget_with_setup
-        num_edges = len(widget._edge_sample_order)
+        num_edges = widget._edge_sampler.total_count()
 
-        # Widget should start at first edge - previous should be disabled
-        assert widget._current_display_idx == 0
+        assert widget._edge_sampler.current_index() == 0
         assert not widget._previous_edge_button.enabled
 
-        # Navigate to second-to-last edge by clicking next repeatedly
         for _ in range(num_edges - 2):
             widget._next_edge_button.clicked()
 
-        # Should now be at second-to-last edge, button still says "Save && Next"
-        assert widget._current_display_idx == num_edges - 2
+        assert widget._edge_sampler.current_index() == num_edges - 2
         assert widget._next_edge_button.text == "Save && Next"
 
-        # Click next once more to reach last edge
         widget._next_edge_button.clicked()
 
-        # Button text should change to "Save && Finish" at last edge
-        assert widget._current_display_idx == num_edges - 1
+        assert widget._edge_sampler.current_index() == num_edges - 1
         assert widget._next_edge_button.text == "Save && Finish"
 
-        # Click "Save && Finish" button
         widget._next_edge_button.clicked()
 
-        # After clicking at last edge, button should be disabled
         assert not widget._next_edge_button.enabled
 
 
@@ -357,7 +350,7 @@ class TestPointEditing:
         widget = widget_with_setup
         points_layer = widget._viewer.layers[EDGE_FOCUS_POINT_NAME]
 
-        current_edge = tuple(widget._edge_sample_order[widget._current_display_idx])
+        current_edge = widget._edge_sampler.current()
 
         # Keep only target point (ring)
         symbols = list(points_layer.symbol)
@@ -367,7 +360,6 @@ class TestPointEditing:
 
         widget._next_edge_button.clicked()
 
-        # Edge should be marked as FP with single node
         assert current_edge in widget._state.fp_edges
         assert widget._controller.is_edge_annotated(current_edge)
 
@@ -376,7 +368,7 @@ class TestPointEditing:
         widget = widget_with_setup
         points_layer = widget._viewer.layers[EDGE_FOCUS_POINT_NAME]
 
-        current_edge = tuple(widget._edge_sample_order[widget._current_display_idx])
+        current_edge = widget._edge_sampler.current()
 
         # Remove all points (3D data: [z, y, x])
         points_layer.data = np.empty((0, 3))
@@ -407,7 +399,7 @@ class TestPointEditing:
         widget = widget_with_setup
         points_layer = widget._viewer.layers[EDGE_FOCUS_POINT_NAME]
 
-        current_edge = tuple(widget._edge_sample_order[widget._current_display_idx])
+        current_edge = widget._edge_sampler.current()
 
         # Move target point to a new location
         new_data = points_layer.data.copy()
@@ -441,7 +433,7 @@ class TestPointEditing:
         widget = widget_with_setup
         points_layer = widget._viewer.layers[EDGE_FOCUS_POINT_NAME]
 
-        current_edge = tuple(widget._edge_sample_order[widget._current_display_idx])
+        current_edge = widget._edge_sampler.current()
 
         # Move target point to a blank location (no segmentation label)
         new_data = points_layer.data.copy()
@@ -477,7 +469,7 @@ class TestPointEditing:
         """Test that keeping both original points marks edge as TP."""
         widget = widget_with_setup
 
-        current_edge = tuple(widget._edge_sample_order[widget._current_display_idx])
+        current_edge = widget._edge_sampler.current()
 
         # Don't modify points layer - click next directly
         widget._next_edge_button.clicked()
