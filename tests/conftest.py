@@ -205,34 +205,13 @@ def synthetic_tracked():
 
 
 # ---------------------------------------------------------------------------
-# Real-solve fixture (requires valid Gurobi licence)
+# Real-solve fixture
 # ---------------------------------------------------------------------------
-
-
-def _gurobi_licensed():
-    try:
-        import gurobipy as gp
-
-        gp.Model()
-        return True
-    except Exception:
-        return False
-
-
-gurobi_available = pytest.mark.skipif(
-    not _gurobi_licensed(),
-    reason="Gurobi licence not available",
-)
 
 
 @pytest.fixture
 def debug_tracked(human_detections):
-    """A Tracked object produced in DEBUG_MODE with all_edges, all_vertices, and model.
-
-    Requires a valid Gurobi licence — skip with @gurobi_available if unavailable.
-    """
-    if not _gurobi_licensed():
-        pytest.skip("Gurobi licence not available")
+    """A Tracked object produced in DEBUG_MODE with all_edges, all_vertices, and model."""
     detections, im_shape = human_detections
     tracker = Tracker(im_shape=im_shape)
     tracker.DEBUG_MODE = True
