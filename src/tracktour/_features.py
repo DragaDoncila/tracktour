@@ -13,39 +13,31 @@ import numpy as np
 from scipy.special import softmax as scipy_softmax
 
 
-def assign_migration_features(all_edges, detections):
+def assign_migration_features(all_edges):
     """Add migration-based features to all_edges.
 
     For each migration edge (u >= 0, v >= 0), records the rank of the target
-    among all candidate neighbours of the source sorted by distance, and the
-    ratio of target area to source area.
+    among all candidate neighbours of the source sorted by distance.
 
     Parameters
     ----------
     all_edges : pd.DataFrame
         Candidate edge dataframe from Tracker (DEBUG_MODE). Modified in-place.
-    detections : pd.DataFrame
-        Detection dataframe with an 'area' column, indexed by detection id.
 
     Returns
     -------
     list[str]
-        Names of columns added: ['distance', 'chosen_neighbour_rank',
-        'chosen_neighbour_area_prop']
+        Names of columns added: ['distance', 'chosen_neighbour_rank']
     """
     all_edges["chosen_neighbour_rank"] = -1
-    all_edges["chosen_neighbour_area_prop"] = -1.0
 
     migration_edges = all_edges[(all_edges.u >= 0) & (all_edges.v >= 0)]
     for _, group in migration_edges.groupby("u"):
         sorted_group = group.sort_values(by="distance").reset_index()
         for i, row in enumerate(sorted_group.itertuples()):
-            u_area = detections.loc[row.u, "area"]
-            v_area = detections.loc[row.v, "area"]
-            all_edges.loc[row.index, "chosen_neighbour_area_prop"] = v_area / u_area
             all_edges.loc[row.index, "chosen_neighbour_rank"] = i
 
-    return ["distance", "chosen_neighbour_rank", "chosen_neighbour_area_prop"]
+    return ["distance", "chosen_neighbour_rank"]
 
 
 def assign_sensitivity_features(all_edges, model):
@@ -146,7 +138,7 @@ def assign_probability_features(all_edges):
     return ["softmax", "softmax_entropy", "parental_softmax"]
 
 
-def assign_all_features(all_edges, detections, model):
+def assign_all_features(all_edges, model):
     """Compute and assign all available edge features.
 
     Convenience wrapper calling all three feature assignment functions.
@@ -156,8 +148,6 @@ def assign_all_features(all_edges, detections, model):
     ----------
     all_edges : pd.DataFrame
         Candidate edge dataframe from Tracker (DEBUG_MODE). Modified in-place.
-    detections : pd.DataFrame
-        Detection dataframe with an 'area' column.
     model : gurobipy.Model or compatible mock
         The solved model.
 
@@ -167,7 +157,7 @@ def assign_all_features(all_edges, detections, model):
         Names of all columns added.
     """
     cols = []
-    cols += assign_migration_features(all_edges, detections)
+    cols += assign_migration_features(all_edges)
     cols += assign_sensitivity_features(all_edges, model)
     cols += assign_probability_features(all_edges)
     return cols

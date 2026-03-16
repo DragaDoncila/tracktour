@@ -17,16 +17,12 @@ from tracktour import (
 
 
 def test_migration_features_returns_expected_column_names(synthetic_tracked):
-    cols = assign_migration_features(
-        synthetic_tracked.all_edges, synthetic_tracked.tracked_detections
-    )
-    assert cols == ["distance", "chosen_neighbour_rank", "chosen_neighbour_area_prop"]
+    cols = assign_migration_features(synthetic_tracked.all_edges)
+    assert cols == ["distance", "chosen_neighbour_rank"]
 
 
 def test_migration_features_closest_neighbour_has_rank_zero(synthetic_tracked):
-    assign_migration_features(
-        synthetic_tracked.all_edges, synthetic_tracked.tracked_detections
-    )
+    assign_migration_features(synthetic_tracked.all_edges)
     migration = synthetic_tracked.all_edges[
         (synthetic_tracked.all_edges.u >= 0) & (synthetic_tracked.all_edges.v >= 0)
     ]
@@ -36,9 +32,7 @@ def test_migration_features_closest_neighbour_has_rank_zero(synthetic_tracked):
 
 
 def test_migration_features_rank_matches_distance_order(synthetic_tracked):
-    assign_migration_features(
-        synthetic_tracked.all_edges, synthetic_tracked.tracked_detections
-    )
+    assign_migration_features(synthetic_tracked.all_edges)
     migration = synthetic_tracked.all_edges[
         (synthetic_tracked.all_edges.u >= 0) & (synthetic_tracked.all_edges.v >= 0)
     ]
@@ -49,24 +43,10 @@ def test_migration_features_rank_matches_distance_order(synthetic_tracked):
         )
 
 
-def test_migration_features_area_prop_is_v_over_u(synthetic_tracked):
-    det = synthetic_tracked.tracked_detections
-    assign_migration_features(synthetic_tracked.all_edges, det)
-    migration = synthetic_tracked.all_edges[
-        (synthetic_tracked.all_edges.u >= 0) & (synthetic_tracked.all_edges.v >= 0)
-    ]
-    for row in migration.itertuples():
-        expected = det.loc[row.v, "area"] / det.loc[row.u, "area"]
-        assert row.chosen_neighbour_area_prop == pytest.approx(expected)
-
-
 def test_migration_features_virtual_edges_unchanged(synthetic_tracked):
-    assign_migration_features(
-        synthetic_tracked.all_edges, synthetic_tracked.tracked_detections
-    )
+    assign_migration_features(synthetic_tracked.all_edges)
     virtual = synthetic_tracked.all_edges[synthetic_tracked.all_edges.u < 0]
     assert (virtual["chosen_neighbour_rank"] == -1).all()
-    assert (virtual["chosen_neighbour_area_prop"] == -1.0).all()
 
 
 # ---------------------------------------------------------------------------
@@ -180,13 +160,11 @@ def test_assign_all_features_adds_all_expected_columns(
     synthetic_tracked, mock_gurobi_model
 ):
     all_edges = synthetic_tracked.all_edges
-    det = synthetic_tracked.tracked_detections
     model = mock_gurobi_model(all_edges)
-    cols = assign_all_features(all_edges, det, model)
+    cols = assign_all_features(all_edges, model)
     expected = {
         "distance",
         "chosen_neighbour_rank",
-        "chosen_neighbour_area_prop",
         "sa_obj_low",
         "sa_obj_up",
         "sensitivity_diff",
@@ -196,3 +174,66 @@ def test_assign_all_features_adds_all_expected_columns(
     }
     assert set(cols) == expected
     assert expected.issubset(set(all_edges.columns))
+
+
+# ---------------------------------------------------------------------------
+# Tracked.assign_features
+# ---------------------------------------------------------------------------
+
+
+def test_tracked_assign_features_raises_without_debug_mode(synthetic_tracked):
+    import pytest
+
+    # synthetic_tracked has all_edges; simulate missing by passing a plain Tracked
+    from tracktour._tracker import Tracked
+
+    no_debug = Tracked(
+        tracked_edges=synthetic_tracked.tracked_edges,
+        tracked_detections=synthetic_tracked.tracked_detections,
+        frame_key=synthetic_tracked.frame_key,
+        location_keys=synthetic_tracked.location_keys,
+        value_key=synthetic_tracked.value_key,
+    )
+    with pytest.raises(ValueError, match="DEBUG_MODE"):
+        no_debug.assign_features()
+
+
+def test_tracked_assign_features_adds_all_columns_with_model(
+    synthetic_tracked, mock_gurobi_model
+):
+    synthetic_tracked.model = mock_gurobi_model(synthetic_tracked.all_edges)
+    cols = synthetic_tracked.assign_features()
+    expected = {
+        "distance",
+        "chosen_neighbour_rank",
+        "sa_obj_low",
+        "sa_obj_up",
+        "sensitivity_diff",
+        "softmax",
+        "softmax_entropy",
+        "parental_softmax",
+    }
+    assert set(cols) == expected
+    assert expected.issubset(set(synthetic_tracked.all_edges.columns))
+
+
+def test_tracked_assign_features_warns_and_skips_sensitivity_without_model(
+    synthetic_tracked,
+):
+    cols = synthetic_tracked.assign_features()
+    sensitivity_cols = {"sa_obj_low", "sa_obj_up", "sensitivity_diff"}
+    assert not sensitivity_cols.intersection(set(cols))
+
+
+def test_tracked_assign_features_without_model_still_adds_probability_and_migration(
+    synthetic_tracked,
+):
+    cols = synthetic_tracked.assign_features()
+    expected = {
+        "distance",
+        "chosen_neighbour_rank",
+        "softmax",
+        "softmax_entropy",
+        "parental_softmax",
+    }
+    assert expected.issubset(set(cols))

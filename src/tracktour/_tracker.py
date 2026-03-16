@@ -151,6 +151,58 @@ class Tracked(BaseModel):
         cand_graph.add_nodes_from(node_attrs.items())
         return cand_graph
 
+    def assign_features(self):
+        """Compute and assign all available edge features to all_edges in-place.
+
+        Assigns three groups of features:
+
+        - **Probability features** (always): softmax, softmax_entropy,
+          parental_softmax.
+        - **Migration features** (always): distance, chosen_neighbour_rank.
+        - **Sensitivity features** (requires ``model`` from DEBUG_MODE):
+          sa_obj_low, sa_obj_up, sensitivity_diff.  A warning is printed if
+          the model is absent and these features are skipped.
+
+        Returns
+        -------
+        list[str]
+            Names of the columns added to ``all_edges``.
+
+        Raises
+        ------
+        ValueError
+            If ``all_edges`` is None (Tracker was not run in DEBUG_MODE).
+        """
+        import warnings
+
+        from tracktour._features import (
+            assign_migration_features,
+            assign_probability_features,
+            assign_sensitivity_features,
+        )
+
+        if self.all_edges is None:
+            raise ValueError(
+                "all_edges is only available when the Tracker was run with "
+                "DEBUG_MODE=True. Re-solve with tracker.DEBUG_MODE = True."
+            )
+
+        cols = []
+        cols += assign_probability_features(self.all_edges)
+        cols += assign_migration_features(self.all_edges)
+
+        if self.model is not None:
+            cols += assign_sensitivity_features(self.all_edges, self.model)
+        else:
+            warnings.warn(
+                "Sensitivity features require a live Gurobi model (DEBUG_MODE). "
+                "Skipping sa_obj_low, sa_obj_up, sensitivity_diff.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        return cols
+
     def write_solution_geff(self, path, overwrite=False):
         """Write the solution graph to a GEFF file. See _geff_io.write_solution_geff."""
         from tracktour._geff_io import write_solution_geff
