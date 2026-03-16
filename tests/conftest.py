@@ -74,7 +74,6 @@ def synthetic_tracked():
             "exit_cost": [0.5] * 9,
             "div_cost": [1.0] * 9,
             "label": list(range(1, 10)),
-            "area": [10.0] * 9,
         }
     )
 
@@ -99,7 +98,6 @@ def synthetic_tracked():
             "exit_cost": [0.0, 0.0, 0.0, 0.0],
             "div_cost": [0.0, 0.0, 0.0, 0.0],
             "label": [-1, -1, -1, -1],
-            "area": [-1.0, -1.0, -1.0, -1.0],
         },
         index=[
             VirtualVertices.SOURCE.value,
