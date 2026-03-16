@@ -59,7 +59,7 @@ packages = ["src"]
 [project.optional-dependencies]
 napari = [
     "arboretum",
-    "napari[all]<0.7.0",
+    "napari<0.7.0",
     "napari-graph",
 ]
 test = ["pytest>=6.0", "napari[all,testing]"]
