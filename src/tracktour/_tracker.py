@@ -81,21 +81,87 @@ class Tracked(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    def as_nx_digraph(self):
+    def as_nx_digraph(self, include_all_attrs: bool = False):
         edges = self.tracked_edges
         nodes = self.tracked_detections
+        if include_all_attrs:
+            edge_attrs = [c for c in edges.columns if c not in ("u", "v")]
+        else:
+            edge_attrs = [
+                "flow"
+            ]  # optional but may be useful for debugging or finding merge edges
         sol_graph = nx.from_pandas_edgelist(
             edges,
             "u",
             "v",
-            ["flow"],  # optional but may be useful for debugging or finding merge edges
+            edge_attrs,
             create_using=nx.DiGraph,
         )
-        det_keys = [self.frame_key] + self.location_keys
-        if self.value_key in self.tracked_detections.columns:
-            det_keys += [self.value_key]
-        sol_graph.add_nodes_from(nodes[det_keys].to_dict(orient="index").items())
+        if include_all_attrs:
+            node_attrs = nodes.to_dict(orient="index")
+        else:
+            det_keys = [self.frame_key] + self.location_keys
+            if self.value_key in self.tracked_detections.columns:
+                det_keys += [self.value_key]
+            node_attrs = nodes[det_keys].to_dict(orient="index")
+        sol_graph.add_nodes_from(node_attrs.items())
         return sol_graph
+
+    def as_candidate_nx_digraph(self, include_all_attrs: bool = False):
+        """Build a networkx DiGraph from the full candidate graph.
+
+        Only available when the Tracker was run with DEBUG_MODE=True.
+
+        Parameters
+        ----------
+        include_all_attrs : bool, optional
+            If True, all columns from all_edges and all_vertices are stored as
+            edge and node properties. If False (default), only flow is stored
+            on edges and frame_key + location_keys on nodes.
+
+        Raises
+        ------
+        ValueError
+            If all_edges or all_vertices is None (not produced in DEBUG_MODE).
+        """
+        if self.all_edges is None or self.all_vertices is None:
+            raise ValueError(
+                "Candidate graph is only available when the Tracker was run "
+                "with DEBUG_MODE=True. Re-solve with tracker.DEBUG_MODE = True."
+            )
+        # 'index' is an artifact of reset_index() in _get_all_edges, not a
+        # meaningful graph attribute
+        _skip = {"u", "v", "index"}
+        if include_all_attrs:
+            edge_attrs = [c for c in self.all_edges.columns if c not in _skip]
+        else:
+            edge_attrs = ["flow"]
+        cand_graph = nx.from_pandas_edgelist(
+            self.all_edges,
+            "u",
+            "v",
+            edge_attrs,
+            create_using=nx.DiGraph,
+        )
+        if include_all_attrs:
+            node_attrs = self.all_vertices.to_dict(orient="index")
+        else:
+            det_keys = [self.frame_key] + list(self.location_keys)
+            node_attrs = self.all_vertices[det_keys].to_dict(orient="index")
+        cand_graph.add_nodes_from(node_attrs.items())
+        return cand_graph
+
+    def write_solution_geff(self, path, overwrite=False):
+        """Write the solution graph to a GEFF file. See _geff_io.write_solution_geff."""
+        from tracktour._geff_io import write_solution_geff
+
+        write_solution_geff(self, path, overwrite=overwrite)
+
+    def write_candidate_geff(self, path, overwrite=False):
+        """Write the candidate graph to a GEFF file. See _geff_io.write_candidate_geff."""
+        from tracktour._geff_io import write_candidate_geff
+
+        write_candidate_geff(self, path, overwrite=overwrite)
 
 
 # TODO: should also be pydantic?

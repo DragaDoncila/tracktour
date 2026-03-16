@@ -10,35 +10,6 @@ from tracktour import Tracker
 from tracktour._tracker import VirtualVertices
 
 
-@pytest.fixture
-def get_detections(n_frames=10, n_cells_per_frame=10):
-    def _get_detections():
-        np.random.seed(0)
-        total_size = n_frames * n_cells_per_frame
-        detections = pd.DataFrame(
-            {
-                "t": np.repeat(np.arange(n_frames), n_cells_per_frame),
-                "y": np.random.randint(1, 19, size=total_size),
-                "x": np.random.randint(1, 39, size=total_size),
-            }
-        )
-        return detections
-
-    return _get_detections
-
-
-@pytest.fixture
-def human_detections():
-    im_shape = (10, 10)
-    detection_dict = {
-        "t": [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2],
-        "y": [1, 3, 9, 1, 1, 3, 8, 2, 1, 2, 7],
-        "x": [1, 4, 9, 2, 3, 5, 9, 2, 3, 4, 9],
-    }
-    detections = pd.DataFrame(detection_dict)
-    return detections, im_shape
-
-
 def test_build_trees(get_detections):
     detections = get_detections()
     tracker = Tracker(im_shape=(20, 40))
