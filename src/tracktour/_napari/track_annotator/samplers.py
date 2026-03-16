@@ -155,9 +155,13 @@ class DUCBEdgeSampler(EdgeSampler):
 
         # Navigation state
         self._visited: set = set()
-        # History entries: (df_index, arm_name_or_None)
-        self._history: list[tuple] = []
+        # History entries: [df_index, arm, reward] — mutable lists so reward can be updated.
+        # reward starts as None until provide_reward is called for that position.
+        self._history: list[list] = []
         self._hist_pos: int = -1
+        # Set when a reward is changed retroactively (at a non-frontier position).
+        # Triggers a full bandit-state recompute before the next frontier pick.
+        self._history_dirty: bool = False
 
         # Initialise by picking the first edge
         self._pick_next_and_append()
@@ -220,11 +224,33 @@ class DUCBEdgeSampler(EdgeSampler):
             self.discounted_arm_played[arm] *= self._gamma
             self.discounted_arm_rewards[arm] *= self._gamma
 
+    def _recompute_bandit_state(self) -> None:
+        """Recompute discounted_arm_played and discounted_arm_rewards from history.
+
+        Called when a retroactive reward change has dirtied the running totals.
+        O(H) where H is the number of history entries.
+
+        Each history entry at position i has been discounted by gamma once per
+        subsequent round, so its contribution is gamma^(H - 1 - i).
+        """
+        H = len(self._history)
+        for arm in self.discounted_arm_played:
+            self.discounted_arm_played[arm] = 0.0
+            self.discounted_arm_rewards[arm] = 0.0
+        for i, (_, arm, reward) in enumerate(self._history):
+            discount = self._gamma ** (H - 1 - i)
+            self.discounted_arm_played[arm] += discount
+            if reward is not None:
+                self.discounted_arm_rewards[arm] += reward * discount
+
     def _pick_next_and_append(self) -> bool:
         """Run one UCB round, append the chosen edge to history.
 
         Returns True if an edge was appended, False if all edges are exhausted.
         """
+        if self._history_dirty:
+            self._recompute_bandit_state()
+            self._history_dirty = False
         self._apply_discount()
         arm = self._select_arm()
         if arm is None:
@@ -235,7 +261,7 @@ class DUCBEdgeSampler(EdgeSampler):
         self.discounted_arm_played[arm] += 1.0
         self._arm_play_count[arm] += 1
         self._visited.add(df_idx)
-        self._history.append((df_idx, arm))
+        self._history.append([df_idx, arm, None])
         return True
 
     # ------------------------------------------------------------------
@@ -243,7 +269,7 @@ class DUCBEdgeSampler(EdgeSampler):
     # ------------------------------------------------------------------
 
     def current(self) -> tuple[int, int]:
-        df_idx, _ = self._history[self._hist_pos]
+        df_idx, _, _ = self._history[self._hist_pos]
         return self._edge_lookup[df_idx]
 
     def next(self) -> Optional[tuple[int, int]]:
@@ -279,7 +305,11 @@ class DUCBEdgeSampler(EdgeSampler):
         return self._hist_pos
 
     def provide_reward(self, reward: float) -> None:
-        """Update the reward sum for the arm that produced the current edge.
+        """Record the reward for the current edge and update bandit state.
+
+        At the frontier this is an O(1) update. At a previously visited
+        position, if the reward has changed, the dirty flag is set so the
+        full bandit state is recomputed (O(H)) before the next frontier pick.
 
         Parameters
         ----------
@@ -287,6 +317,15 @@ class DUCBEdgeSampler(EdgeSampler):
             Reward signal for the current edge. Typically 1.0 if the edge
             is an error and 0.0 if it is correct.
         """
-        _, arm = self._history[self._hist_pos]
-        if arm is not None:
-            self.discounted_arm_rewards[arm] += reward
+        entry = self._history[self._hist_pos]
+        _, arm, old_reward = entry
+        if old_reward == reward:
+            return
+        entry[2] = reward
+        at_frontier = self._hist_pos == len(self._history) - 1
+        if at_frontier:
+            # O(1) delta: subtract old contribution (0 if never set) and add new
+            previous = old_reward if old_reward is not None else 0.0
+            self.discounted_arm_rewards[arm] += reward - previous
+        else:
+            self._history_dirty = True

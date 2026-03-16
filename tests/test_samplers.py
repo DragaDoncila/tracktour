@@ -280,10 +280,71 @@ def test_ducb_n_and_s_discounted_on_next_call(simple_edges_df):
 def test_ducb_two_arms_each_played_before_ucb(two_arm_edges_df):
     # Both arms have N=0 at start, so each is played once before UCB kicks in
     sampler = DUCBEdgeSampler(two_arm_edges_df, {"score": True, "rank": True})
-    _, arm0 = sampler._history[0]
+    _, arm0, _ = sampler._history[0]
     sampler.next()
-    _, arm1 = sampler._history[1]
+    _, arm1, _ = sampler._history[1]
     assert {arm0, arm1} == {"score", "rank"}
+
+
+def test_ducb_provide_reward_stores_in_history(simple_edges_df):
+    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    sampler.provide_reward(1.0)
+    assert sampler._history[0][2] == 1.0
+
+
+def test_ducb_provide_reward_same_value_is_noop(simple_edges_df):
+    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    sampler.provide_reward(1.0)
+    rewards_before = sampler.discounted_arm_rewards["score"]
+    sampler.provide_reward(1.0)
+    assert sampler.discounted_arm_rewards["score"] == rewards_before
+
+
+def test_ducb_retroactive_reward_sets_dirty_flag(simple_edges_df):
+    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    sampler.provide_reward(1.0)
+    sampler.next()
+    sampler.provide_reward(0.0)
+    sampler.previous()
+    # back at position 0, which is not at the frontier
+    sampler.provide_reward(0.0)  # change from 1.0 to 0.0
+    assert sampler._history_dirty
+
+
+def test_ducb_retroactive_reward_same_value_does_not_set_dirty(simple_edges_df):
+    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    sampler.provide_reward(1.0)
+    sampler.next()
+    sampler.previous()
+    sampler.provide_reward(1.0)  # same value — no change
+    assert not sampler._history_dirty
+
+
+def test_ducb_recompute_clears_dirty_flag(simple_edges_df):
+    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    sampler.provide_reward(1.0)
+    sampler.next()
+    sampler.previous()
+    sampler.provide_reward(0.0)
+    assert sampler._history_dirty
+    sampler.next()  # advances to frontier, triggering recompute
+    sampler.next()  # now at new frontier: recompute should have run
+    assert not sampler._history_dirty
+
+
+def test_ducb_recompute_bandit_state_matches_incremental(simple_edges_df):
+    # Build a sampler the normal incremental way
+    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    sampler.provide_reward(1.0)
+    sampler.next()
+    sampler.provide_reward(0.0)
+    incremental_played = dict(sampler.discounted_arm_played)
+    incremental_rewards = dict(sampler.discounted_arm_rewards)
+
+    # Force a full recompute and check it matches
+    sampler._recompute_bandit_state()
+    assert sampler.discounted_arm_played == pytest.approx(incremental_played)
+    assert sampler.discounted_arm_rewards == pytest.approx(incremental_rewards)
 
 
 def test_ducb_empty_bandit_arms_raises():
