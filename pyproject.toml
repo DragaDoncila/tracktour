@@ -15,6 +15,7 @@ authors = [
 ]
 dynamic = ["version"]
 dependencies = [
+    "geff>=1.1",
     "gurobipy",
     "imagecodecs",
     "networkx",
@@ -58,7 +59,7 @@ packages = ["src"]
 [project.optional-dependencies]
 napari = [
     "arboretum",
-    "napari[all]",
+    "napari<0.7.0",
     "napari-graph",
 ]
 test = ["pytest>=6.0", "napari[all,testing]"]
