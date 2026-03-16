@@ -267,8 +267,8 @@ def test_ducb_provide_reward_zero_updates_s_to_zero(simple_edges_df):
 
 
 def test_ducb_n_and_s_discounted_on_next_call(simple_edges_df):
-    gamma = 0.9
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True}, gamma=gamma)
+    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    gamma = sampler._gamma
     assert sampler.discounted_arm_played["score"] == 1.0
     sampler.provide_reward(1.0)
     sampler.next()

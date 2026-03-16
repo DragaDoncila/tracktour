@@ -95,8 +95,13 @@ class DUCBEdgeSampler(EdgeSampler):
     Each bandit arm corresponds to one feature column. At each step, the arm
     with the highest UCB score is selected and its top-ranked unvisited edge
     is returned. Rewards from the user (via ``provide_reward``) update the
-    selected arm's state. A discount factor ``gamma`` down-weights older
-    observations, allowing the sampler to adapt as annotation progresses.
+    selected arm's state.
+
+    Bandit hyperparameters (B, epsilon, gamma) are fixed to the values from
+    the reference implementation and are not configurable. Gamma is computed
+    from the number of edges: ``1 - 1 / (4 * sqrt(2 * n))`` (as described
+    in the original DUCB paper):
+    https://doi.org/10.48550/arXiv.0805.3415
 
     Navigating backwards with ``previous()`` replays the history without
     re-running the bandit. Calling ``next()`` doesn't run the bandit unless
@@ -110,29 +115,21 @@ class DUCBEdgeSampler(EdgeSampler):
         Mapping of feature column name → ascending flag.
         ``ascending=True`` means smaller values are sorted first (i.e. small
         feature value = more likely to be an error).
-    B : float
-        Exploration coefficient. Higher values favour less-played arms.
-    epsilon : float
-        Scales the confidence bound width.
-    gamma : float
-        Discount factor in (0, 1]. ``1.0`` means no discounting.
     """
+
+    _B = 2.0
+    _EPSILON = 0.5
 
     def __init__(
         self,
         edges_df: pd.DataFrame,
         bandit_arms: dict[str, bool],
-        B: float = 1.0,
-        epsilon: float = 2.0,
-        gamma: float = 1.0,
     ):
         if not bandit_arms:
             raise ValueError("bandit_arms must contain at least one arm.")
 
-        self._B = B
-        self._epsilon = epsilon
-        self._gamma = gamma
         self._total = len(edges_df)
+        self._gamma = 1 - 1 / (4 * math.sqrt(2 * self._total))
 
         # Per-arm sorted list of DataFrame indices (not reset integer positions)
         self._arm_sorted: dict[str, list] = {}
@@ -143,8 +140,6 @@ class DUCBEdgeSampler(EdgeSampler):
             )
             self._arm_ptr[arm] = 0
 
-        # Bandit state: discounted play count (N, updated at selection) and
-        # discounted reward sum (S, updated in provide_reward).
         self.discounted_arm_played: dict[str, float] = {arm: 0.0 for arm in bandit_arms}
         self.discounted_arm_rewards: dict[str, float] = {
             arm: 0.0 for arm in bandit_arms
@@ -190,8 +185,7 @@ class DUCBEdgeSampler(EdgeSampler):
 
         Ensures each arm is tried at least once before UCB scores are
         compared. After the init phase, arms with discounted play count
-        below 1 are treated as needing exploration (UCB = ∞), matching
-        the behaviour of the reference D-UCB implementation.
+        below 1 are treated as needing exploration (UCB = ∞).
 
         Returns None if all edges have been visited.
         """
@@ -214,7 +208,7 @@ class DUCBEdgeSampler(EdgeSampler):
                 ucb = math.inf
             else:
                 ucb = self.discounted_arm_rewards[arm] / n + self._B * math.sqrt(
-                    self._epsilon * math.log(eta_t) / n
+                    self._EPSILON * math.log(eta_t) / n
                 )
             if ucb > best_ucb:
                 best_ucb = ucb
