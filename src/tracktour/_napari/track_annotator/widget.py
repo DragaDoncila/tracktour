@@ -933,13 +933,11 @@ class TrackAnnotator(QWidget):
         ducb_layout = QVBoxLayout()
         ducb_layout.setContentsMargins(0, 4, 0, 0)
 
-        # file picker for loading edges from a GEFF (fallback if no tracked in layer)
-        file_row = QHBoxLayout()
-        self._edges_file_edit = FileEdit(filter="*.geff", label="Edges file")
-        self._load_edges_button = PushButton(text="Load")
-        self._load_edges_button.clicked.connect(self._load_edges_from_file)
-        file_row.addWidget(self._edges_file_edit.native)
-        file_row.addWidget(self._load_edges_button.native)
+        # TODO: file picker for loading edges from a GEFF when the tracks layer
+        # does not have tracked metadata — not yet implemented.
+        # self._edges_file_edit = FileEdit(filter="*.geff", label="Edges file")
+        # self._load_edges_button = PushButton(text="Load")
+        # self._load_edges_button.clicked.connect(self._load_edges_from_file)
 
         self._edges_status_label = QLabel("No edges loaded")
 
@@ -957,7 +955,6 @@ class TrackAnnotator(QWidget):
         self._apply_sampler_button.clicked.connect(self._apply_sampler)
         self._apply_sampler_button.enabled = False
 
-        ducb_layout.addLayout(file_row)
         ducb_layout.addWidget(self._edges_status_label)
         ducb_layout.addWidget(self._feature_scroll)
         ducb_layout.addWidget(self._apply_sampler_button.native)
@@ -989,32 +986,6 @@ class TrackAnnotator(QWidget):
         ae = tracked.all_edges
         sol_edges = ae[(ae.u >= 0) & (ae.v >= 0) & (ae.flow > 0)].copy()
         self._populate_edges(sol_edges, source="tracks layer")
-        # Disable file picker — edges are sourced from the layer
-        self._edges_file_edit.enabled = False
-        self._load_edges_button.enabled = False
-
-    def _load_edges_from_file(self):
-        from tracktour._geff_io import read_candidate_geff, read_geff
-
-        path = str(self._edges_file_edit.value)
-        if not path or path == ".":
-            return
-        try:
-            try:
-                g = read_candidate_geff(path)
-            except Exception:
-                g = read_geff(path)
-            import pandas as pd
-
-            edges = [
-                {**{"u": u, "v": v}, **data}
-                for u, v, data in g.edges(data=True)
-                if u >= 0 and v >= 0
-            ]
-            edges_df = pd.DataFrame(edges)
-            self._populate_edges(edges_df, source=path)
-        except Exception as e:
-            self._edges_status_label.setText(f"Error: {e}")
 
     def _populate_edges(self, edges_df, source=""):
         self._ducb_edges_df = edges_df
@@ -1069,7 +1040,9 @@ class TrackAnnotator(QWidget):
         else:
             if self._ducb_edges_df is None:
                 show_info(
-                    "No edges loaded. Load a GEFF file or use a layer with tracked metadata."
+                    "D-UCB requires a tracks layer produced by the TracktourSolver "
+                    "(the layer must have a 'tracked' attribute with edge features). "
+                    "Please solve first or select a compatible tracks layer."
                 )
                 return
             bandit_arms = {}
@@ -1101,8 +1074,6 @@ class TrackAnnotator(QWidget):
         self._sampler_type_combo.enabled = False
         self._apply_random_button.enabled = False
         self._apply_sampler_button.enabled = False
-        self._edges_file_edit.enabled = False
-        self._load_edges_button.enabled = False
         for _col, use_cb, toggle in self._feature_rows:
             use_cb.setEnabled(False)
             toggle.setEnabled(False)
