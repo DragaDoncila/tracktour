@@ -201,7 +201,32 @@ class Tracked(BaseModel):
                 stacklevel=2,
             )
 
+        self._propagate_features_to_tracked_edges(cols)
         return cols
+
+    def _propagate_features_to_tracked_edges(self, feature_cols):
+        """Copy feature values from all_edges solution rows into tracked_edges.
+
+        Matches rows by (u, v). Only copies columns not already present in
+        tracked_edges. Mutates tracked_edges in-place.
+        """
+        import pandas as pd
+
+        new_cols = [c for c in feature_cols if c not in self.tracked_edges.columns]
+        if not new_cols:
+            return
+
+        sol_in_all = self.all_edges[
+            (self.all_edges.u >= 0)
+            & (self.all_edges.v >= 0)
+            & (self.all_edges.flow > 0)
+        ].set_index(["u", "v"])[new_cols]
+
+        uv_index = pd.MultiIndex.from_arrays(
+            [self.tracked_edges.u, self.tracked_edges.v]
+        )
+        for col in new_cols:
+            self.tracked_edges[col] = sol_in_all[col].reindex(uv_index).values
 
     def write_solution_geff(self, path, overwrite=False):
         """Write the solution graph to a GEFF file. See _geff_io.write_solution_geff."""

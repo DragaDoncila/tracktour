@@ -255,3 +255,27 @@ def test_tracked_assign_features_without_model_still_adds_probability_and_migrat
         "parental_softmax",
     }
     assert expected.issubset(set(cols))
+
+
+def test_tracked_assign_features_propagates_to_tracked_edges(synthetic_tracked):
+    cols = synthetic_tracked.assign_features()
+    propagated = [c for c in cols if c not in ("distance",)]  # distance already there
+    for col in propagated:
+        assert (
+            col in synthetic_tracked.tracked_edges.columns
+        ), f"{col} missing from tracked_edges"
+    # Values should match all_edges for solution rows
+    ae = synthetic_tracked.all_edges
+    sol = ae[(ae.u >= 0) & (ae.v >= 0) & (ae.flow > 0)].set_index(["u", "v"])
+    for _, row in synthetic_tracked.tracked_edges.iterrows():
+        for col in propagated:
+            assert row[col] == sol.loc[(int(row.u), int(row.v)), col]
+
+
+def test_tracked_assign_features_does_not_overwrite_existing_tracked_edge_cols(
+    synthetic_tracked,
+):
+    # distance is already in tracked_edges before assign_features
+    original_distances = synthetic_tracked.tracked_edges["distance"].copy()
+    synthetic_tracked.assign_features()
+    assert (synthetic_tracked.tracked_edges["distance"] == original_distances).all()
