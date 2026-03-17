@@ -127,6 +127,24 @@ def test_sensitivity_features_returns_expected_column_names(
     assert cols == ["sa_obj_low", "sa_obj_up", "sensitivity_diff"]
 
 
+def test_sensitivity_features_parses_virtual_vertex_string_labels(
+    synthetic_tracked, mock_gurobi_model
+):
+    # Virtual edges have varNames like flow[12,s,3] — string labels for virtual nodes.
+    # Parsing must not raise a NameError.
+    model = mock_gurobi_model(synthetic_tracked.all_edges)
+    virtual_var_names = [
+        v.varName
+        for v in model.getVars()
+        if any(
+            label in v.varName
+            for label in (",s,", ",a,", ",d,", ",t,", ",s]", ",a]", ",d]", ",t]")
+        )
+    ]
+    assert len(virtual_var_names) > 0, "fixture has no virtual-vertex variable names"
+    assign_sensitivity_features(synthetic_tracked.all_edges, model)  # must not raise
+
+
 def test_sensitivity_features_non_selected_edge_uses_sa_obj_low(
     synthetic_tracked, mock_gurobi_model
 ):

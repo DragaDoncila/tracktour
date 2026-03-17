@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for tracktool tests."""
+"""Shared pytest fixtures for tracktour tests."""
 
 import types
 
@@ -229,17 +229,23 @@ def mock_gurobi_model():
     """Factory fixture returning a mock Gurobi model for a given all_edges DataFrame.
 
     Each variable has:
-      - varName: "flow(idx, src, dst)" matching the row index and u/v columns
+      - varName: "flow[idx,src,dst]" matching the row index and u/v columns.
+        Virtual vertex IDs are mapped to their Gurobi string labels
+        (-1→s, -2→a, -3→d, -4→t) to match real Gurobi output.
       - X: 1.0 if flow > 0 else 0.0
       - SAObjLow: cost - 0.1
       - SAObjUp: cost + 0.1
     """
+    _virtual_labels = {-1: "s", -2: "a", -3: "d", -4: "t"}
+
+    def _node_label(n):
+        return _virtual_labels.get(n, n)
 
     def _make_model(all_edges):
         vars_ = []
         for row in all_edges.itertuples():
             var = types.SimpleNamespace(
-                varName=f"flow({row.Index}, {row.u}, {row.v})",
+                varName=f"flow[{row.Index},{_node_label(row.u)},{_node_label(row.v)}]",
                 X=float(row.flow) if hasattr(row, "flow") else 0.0,
                 SAObjLow=row.cost - 0.1,
                 SAObjUp=row.cost + 0.1,
