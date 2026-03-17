@@ -6,7 +6,7 @@ import networkx as nx
 import numpy as np
 from magicgui.widgets import FileEdit, PushButton, create_widget
 from napari.utils.notifications import show_info
-from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from qtpy.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from .._graph_conversion_util import get_nxg_from_tracks, get_tracks_from_nxg
 from .commands import (
@@ -19,7 +19,7 @@ from .commands import (
     MarkNodeFPCommand,
 )
 from .controller import AnnotationController
-from .samplers import RandomEdgeSampler
+from .samplers import DUCBEdgeSampler, RandomEdgeSampler
 from .state import AnnotationState
 from .utils import (
     get_count_label_from_grid,
@@ -31,6 +31,23 @@ from .utils import (
     get_separator_widget,
     get_src_tgt_idx,
     split_coords,
+)
+
+# Columns in all_edges that are structural — never offered as bandit arms.
+_EDGE_NON_FEATURE_COLS = frozenset(
+    {
+        "u",
+        "v",
+        "flow",
+        "capacity",
+        "cost",
+        "distance",
+        "index",
+        "model_lb",
+        "model_ub",
+        "bandit_rank",
+        "bandit_arm",
+    }
 )
 
 EDGE_FOCUS_POINT_NAME = "Source Target"
@@ -68,6 +85,10 @@ class TrackAnnotator(QWidget):
         # Annotation state and controller (created when layers are selected)
         self._state: AnnotationState = None
         self._controller: AnnotationController = None
+
+        # D-UCB sampler state
+        self._ducb_edges_df = None
+        self._feature_rows: list[tuple] = []  # (col_name, QCheckBox, QToggleSwitch)
 
         # layer selection widgets
         self._seg_combo = create_widget(
@@ -117,6 +138,9 @@ class TrackAnnotator(QWidget):
         self._reset_to_original_button.clicked.connect(self._reset_to_original_edge)
         self._edge_status_layout.addWidget(self._reset_to_original_button.native)
 
+        # sampler settings panel (built after other widgets so it can reference them)
+        self._sampler_settings = self._build_sampler_settings()
+
         # widgets for counts
         self._counts_grid_layout = get_counts_grid_layout()
 
@@ -138,6 +162,8 @@ class TrackAnnotator(QWidget):
         # add everything to the layout
         self.base_layout.addWidget(self._seg_combo.native)
         self.base_layout.addWidget(self._track_combo.native)
+        self.base_layout.addWidget(get_separator_widget())
+        self.base_layout.addWidget(self._sampler_settings)
         self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._edge_control_layout)
         self.base_layout.addLayout(self._edge_status_layout)
@@ -163,11 +189,13 @@ class TrackAnnotator(QWidget):
         self._state = AnnotationState(nxg)
         self._controller = AnnotationController(self._state)
 
-        # create edge sampler
-        self._edge_sampler = RandomEdgeSampler(list(nxg.edges), seed=0)
-        self._display_edge()
+        # sampler is created only when the user clicks "Apply Sampler"
+        self._edge_sampler = None
+        self._next_edge_button.enabled = False
+        self._previous_edge_button.enabled = False
 
-        self._next_edge_button.enabled = True
+        # auto-populate D-UCB feature table if layer has tracked metadata
+        self._try_load_edges_from_layer()
 
         # connect current step event to colour the points layer appropriately
         self._viewer.dims.events.current_step.connect(self._handle_current_step_change)
@@ -440,7 +468,20 @@ class TrackAnnotator(QWidget):
                     layer.projection_mode = "MEAN"
 
     def _display_next_edge(self):
+        current_edge = self._edge_sampler.current()
         edge_saved = self._save_edge_annotation()
+
+        if edge_saved:
+            command = self._controller.get_edge_command(current_edge)
+            if command is not None:
+                primary = (
+                    command.commands[0]
+                    if isinstance(command, CompositeCommand)
+                    else command
+                )
+                reward = 0.0 if isinstance(primary, MarkEdgeTPCommand) else 1.0
+                self._edge_sampler.provide_reward(reward)
+
         if self._edge_sampler.at_end():
             self._finish_annotating()
             return
@@ -867,6 +908,190 @@ class TrackAnnotator(QWidget):
             gt_tracks_layer.scale = seg_layer_scale
         else:
             self._viewer.add_layer(tracks)
+
+    # -----------------------------------------------------------------------
+    # Sampler settings panel
+    # -----------------------------------------------------------------------
+
+    def _build_sampler_settings(self):
+        from qtpy.QtWidgets import QScrollArea
+        from superqt import QCollapsible
+
+        collapsible = QCollapsible("Sampler Settings")
+        collapsible.collapse(animate=False)
+
+        self._sampler_type_combo = create_widget(
+            value="Random",
+            options={"choices": ["Random", "D-UCB"]},
+            widget_type="ComboBox",
+            label="Sampler Type",
+        )
+        self._sampler_type_combo.changed.connect(self._on_sampler_type_changed)
+        collapsible.addWidget(self._sampler_type_combo.native)
+
+        # --- D-UCB only config ---
+        self._ducb_config_widget = QWidget()
+        ducb_layout = QVBoxLayout()
+        ducb_layout.setContentsMargins(0, 4, 0, 0)
+
+        # file picker for loading edges from a GEFF (fallback if no tracked in layer)
+        file_row = QHBoxLayout()
+        self._edges_file_edit = FileEdit(filter="*.geff", label="Edges file")
+        self._load_edges_button = PushButton(text="Load")
+        self._load_edges_button.clicked.connect(self._load_edges_from_file)
+        file_row.addWidget(self._edges_file_edit.native)
+        file_row.addWidget(self._load_edges_button.native)
+
+        self._edges_status_label = QLabel("No edges loaded")
+
+        # scrollable feature table
+        self._feature_scroll = QScrollArea()
+        self._feature_scroll.setWidgetResizable(True)
+        self._feature_scroll.setMaximumHeight(180)
+        self._feature_table_widget = QWidget()
+        self._feature_table_layout = QVBoxLayout()
+        self._feature_table_layout.setContentsMargins(0, 0, 0, 0)
+        self._feature_table_widget.setLayout(self._feature_table_layout)
+        self._feature_scroll.setWidget(self._feature_table_widget)
+
+        self._apply_sampler_button = PushButton(text="Apply Sampler")
+        self._apply_sampler_button.clicked.connect(self._apply_sampler)
+        self._apply_sampler_button.enabled = False
+
+        ducb_layout.addLayout(file_row)
+        ducb_layout.addWidget(self._edges_status_label)
+        ducb_layout.addWidget(self._feature_scroll)
+        ducb_layout.addWidget(self._apply_sampler_button.native)
+        self._ducb_config_widget.setLayout(ducb_layout)
+        self._ducb_config_widget.setVisible(False)
+        collapsible.addWidget(self._ducb_config_widget)
+
+        # Random sampler also needs an Apply button (to reset/re-seed)
+        self._apply_random_button = PushButton(text="Apply Sampler")
+        self._apply_random_button.clicked.connect(self._apply_sampler)
+        collapsible.addWidget(self._apply_random_button.native)
+
+        return collapsible
+
+    def _on_sampler_type_changed(self, value):
+        is_ducb = value == "D-UCB"
+        self._ducb_config_widget.setVisible(is_ducb)
+        self._apply_random_button.native.setVisible(not is_ducb)
+        if is_ducb and self._ducb_edges_df is None:
+            self._try_load_edges_from_layer()
+
+    def _try_load_edges_from_layer(self):
+        """Auto-populate feature table from tracked metadata if available."""
+        if self._track_combo.value is None:
+            return
+        tracked = self._track_combo.value.metadata.get("tracked")
+        if tracked is None or tracked.all_edges is None:
+            return
+        ae = tracked.all_edges
+        sol_edges = ae[(ae.u >= 0) & (ae.v >= 0) & (ae.flow > 0)].copy()
+        self._populate_edges(sol_edges, source="tracks layer")
+
+    def _load_edges_from_file(self):
+        from tracktour._geff_io import read_candidate_geff, read_geff
+
+        path = str(self._edges_file_edit.value)
+        if not path or path == ".":
+            return
+        try:
+            try:
+                g = read_candidate_geff(path)
+            except Exception:
+                g = read_geff(path)
+            import pandas as pd
+
+            edges = [
+                {**{"u": u, "v": v}, **data}
+                for u, v, data in g.edges(data=True)
+                if u >= 0 and v >= 0
+            ]
+            edges_df = pd.DataFrame(edges)
+            self._populate_edges(edges_df, source=path)
+        except Exception as e:
+            self._edges_status_label.setText(f"Error: {e}")
+
+    def _populate_edges(self, edges_df, source=""):
+        self._ducb_edges_df = edges_df
+        feature_cols = [c for c in edges_df.columns if c not in _EDGE_NON_FEATURE_COLS]
+        n = len(edges_df)
+        m = len(feature_cols)
+        src_label = f" (from {source})" if source else ""
+        self._edges_status_label.setText(f"{n} edges, {m} features{src_label}")
+        self._build_feature_table(feature_cols)
+        self._apply_sampler_button.enabled = m > 0
+
+    def _build_feature_table(self, feature_cols):
+        from superqt import QToggleSwitch
+
+        # clear existing rows
+        while self._feature_table_layout.count():
+            item = self._feature_table_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._feature_rows.clear()
+
+        for col in feature_cols:
+            row = QWidget()
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+
+            use_cb = QCheckBox()
+            use_cb.setChecked(True)
+            toggle = QToggleSwitch()
+            toggle.setChecked(False)  # off = ascending (small → error)
+
+            row_layout.addWidget(QLabel(col))
+            row_layout.addStretch()
+            row_layout.addWidget(use_cb)
+            row_layout.addWidget(QLabel("small→err"))
+            row_layout.addWidget(toggle)
+            row_layout.addWidget(QLabel("large→err"))
+            row.setLayout(row_layout)
+            self._feature_table_layout.addWidget(row)
+            self._feature_rows.append((col, use_cb, toggle))
+
+    def _apply_sampler(self):
+        if self._state is None:
+            show_info("Select segmentation and tracks layers first.")
+            return
+
+        sampler_type = self._sampler_type_combo.value
+        nxg = self._state.original_graph
+
+        if sampler_type == "Random":
+            self._edge_sampler = RandomEdgeSampler(list(nxg.edges), seed=0)
+        else:
+            if self._ducb_edges_df is None:
+                show_info(
+                    "No edges loaded. Load a GEFF file or use a layer with tracked metadata."
+                )
+                return
+            bandit_arms = {}
+            for col, use_cb, toggle in self._feature_rows:
+                if use_cb.isChecked():
+                    # toggle OFF = ascending (small values sorted first = likely errors)
+                    bandit_arms[col] = not toggle.isChecked()
+            if not bandit_arms:
+                show_info("Select at least one feature as a bandit arm.")
+                return
+            # filter edges_df to only solution edges present in nxg
+            solution_pairs = set(nxg.edges)
+            mask = self._ducb_edges_df.apply(
+                lambda r: (int(r.u), int(r.v)) in solution_pairs, axis=1
+            )
+            edges_df = self._ducb_edges_df[mask]
+            if edges_df.empty:
+                show_info("No edges match the current solution graph.")
+                return
+            self._edge_sampler = DUCBEdgeSampler(edges_df, bandit_arms)
+
+        self._display_edge()
+        self._next_edge_button.enabled = True
+        self._previous_edge_button.enabled = False
 
     def _save_annotated_graphs(self):
         dir_path = self._export_path.value
