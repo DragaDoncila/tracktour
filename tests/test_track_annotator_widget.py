@@ -127,6 +127,9 @@ def widget_with_setup(viewer_with_layers):
     assert widget._state is not None
     assert widget._controller is not None
 
+    # Apply the default random sampler so navigation is ready
+    widget._apply_sampler()
+
     return widget
 
 
