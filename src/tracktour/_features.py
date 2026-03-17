@@ -9,8 +9,12 @@ must therefore be called immediately after solving, before the model is
 discarded.
 """
 
+import re
+
 import numpy as np
 from scipy.special import softmax as scipy_softmax
+
+_FLOW_VAR_RE = re.compile(r"flow[\[(](\d+)")
 
 
 def assign_migration_features(all_edges):
@@ -69,7 +73,7 @@ def assign_sensitivity_features(all_edges, model):
     sens_diffs = [None] * len(all_edges)
 
     for var in model.getVars():
-        edg_idx, _src, _dst = eval(var.varName.lstrip("flow"))
+        edg_idx = int(_FLOW_VAR_RE.match(var.varName).group(1))
         edg_row = all_edges.loc[edg_idx]
         if var.X == 0:
             sens_diff = abs(edg_row["cost"] - var.SAObjLow)
