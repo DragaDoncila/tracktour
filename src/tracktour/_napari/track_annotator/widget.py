@@ -41,7 +41,6 @@ _EDGE_NON_FEATURE_COLS = frozenset(
         "flow",
         "capacity",
         "cost",
-        "distance",
         "index",
         "model_lb",
         "model_ub",
@@ -990,6 +989,9 @@ class TrackAnnotator(QWidget):
         ae = tracked.all_edges
         sol_edges = ae[(ae.u >= 0) & (ae.v >= 0) & (ae.flow > 0)].copy()
         self._populate_edges(sol_edges, source="tracks layer")
+        # Disable file picker — edges are sourced from the layer
+        self._edges_file_edit.enabled = False
+        self._load_edges_button.enabled = False
 
     def _load_edges_from_file(self):
         from tracktour._geff_io import read_candidate_geff, read_geff
@@ -1092,6 +1094,19 @@ class TrackAnnotator(QWidget):
         self._display_edge()
         self._next_edge_button.enabled = True
         self._previous_edge_button.enabled = False
+        self._lock_sampler_settings()
+
+    def _lock_sampler_settings(self):
+        """Disable all sampler config widgets after a sampler has been applied."""
+        self._sampler_type_combo.enabled = False
+        self._apply_random_button.enabled = False
+        self._apply_sampler_button.enabled = False
+        self._edges_file_edit.enabled = False
+        self._load_edges_button.enabled = False
+        for _col, use_cb, toggle in self._feature_rows:
+            use_cb.setEnabled(False)
+            toggle.setEnabled(False)
+        self._sampler_settings.collapse(animate=False)
 
     def _save_annotated_graphs(self):
         dir_path = self._export_path.value
