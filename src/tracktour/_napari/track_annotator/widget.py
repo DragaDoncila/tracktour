@@ -94,6 +94,9 @@ class TrackAnnotator(QWidget):
         self._ducb_nxg = None
         self._feature_rows: list[tuple] = []  # (col_name, QCheckBox, QToggleSwitch)
 
+        # Precision estimation state
+        self._annotation_errors: list[int] = []
+
         # layer selection widgets
         self._seg_combo = create_widget(
             annotation="napari.layers.Labels", label="Segmentation"
@@ -144,6 +147,7 @@ class TrackAnnotator(QWidget):
 
         # sampler settings panel (built after other widgets so it can reference them)
         self._sampler_settings = self._build_sampler_settings()
+        self._precision_panel = self._build_precision_panel()
 
         # widgets for counts
         self._counts_grid_layout = get_counts_grid_layout()
@@ -175,6 +179,7 @@ class TrackAnnotator(QWidget):
         self.base_layout.addWidget(self._warn_on_orphan_node_checkbox.native)
         self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addLayout(self._counts_grid_layout)
+        self.base_layout.addWidget(self._precision_panel)
         self.base_layout.addWidget(self._view_ground_truth_button.native)
         self.base_layout.addWidget(get_separator_widget())
         self.base_layout.addWidget(self._export_path.native)
@@ -198,6 +203,8 @@ class TrackAnnotator(QWidget):
         self._edge_sampler = None
         self._next_edge_button.enabled = False
         self._previous_edge_button.enabled = False
+        self._annotation_errors = []
+        self._estimate_precision_button.enabled = False
 
         # auto-populate D-UCB feature table if layer has tracked metadata
         self._try_load_edges_from_layer()
@@ -486,6 +493,13 @@ class TrackAnnotator(QWidget):
                 )
                 reward = 0.0 if isinstance(primary, MarkEdgeTPCommand) else 1.0
                 self._edge_sampler.provide_reward(reward)
+                error_val = 0 if isinstance(primary, MarkEdgeTPCommand) else 1
+                idx = self._edge_sampler.current_index()
+                if idx < len(self._annotation_errors):
+                    self._annotation_errors[idx] = error_val
+                else:
+                    self._annotation_errors.append(error_val)
+                self._update_precision_plot()
 
         if self._edge_sampler.at_end():
             self._finish_annotating()
@@ -1067,6 +1081,7 @@ class TrackAnnotator(QWidget):
         self._display_edge()
         self._next_edge_button.enabled = True
         self._previous_edge_button.enabled = False
+        self._estimate_precision_button.enabled = True
         self._lock_sampler_settings()
 
     def _lock_sampler_settings(self):
@@ -1078,6 +1093,99 @@ class TrackAnnotator(QWidget):
             use_cb.setEnabled(False)
             toggle.setEnabled(False)
         self._sampler_settings.collapse(animate=False)
+
+    # -----------------------------------------------------------------------
+    # Precision estimation panel
+    # -----------------------------------------------------------------------
+
+    def _build_precision_panel(self):
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        from superqt import QCollapsible
+
+        collapsible = QCollapsible("Precision Estimate")
+        collapsible.collapse(animate=False)
+
+        fig = Figure(figsize=(4, 1.8), tight_layout=True)
+        canvas = FigureCanvasQTAgg(fig)
+        canvas.setMaximumHeight(200)
+        self._precision_fig = fig
+        self._precision_canvas = canvas
+
+        ax = fig.add_subplot(111)
+        ax.set_xlabel("Annotation step")
+        ax.set_ylabel("Error rate")
+        ax.set_ylim(0, 1)
+        self._precision_ax = ax
+
+        (self._rolling_line,) = ax.plot([], [], label="Rolling error rate (100)")
+        (self._estimate_line,) = ax.plot(
+            [], [], linestyle="--", color="red", label="Estimate"
+        )
+
+        button_row = QWidget()
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        self._estimate_precision_button = PushButton(text="Estimate Precision")
+        self._estimate_precision_button.enabled = False
+        self._estimate_precision_button.clicked.connect(self._estimate_precision)
+        self._precision_label = QLabel("—")
+        row_layout.addWidget(self._estimate_precision_button.native)
+        row_layout.addWidget(self._precision_label)
+        button_row.setLayout(row_layout)
+
+        collapsible.addWidget(canvas)
+        collapsible.addWidget(button_row)
+        return collapsible
+
+    def _update_precision_plot(self):
+        from .precision import rolling_error_rate
+
+        rates = rolling_error_rate(self._annotation_errors)
+        if len(rates) == 0:
+            return
+        x = np.arange(len(rates))
+        self._rolling_line.set_data(x, rates)
+        self._precision_ax.relim()
+        self._precision_ax.autoscale_view(scaley=False)
+        self._precision_canvas.draw_idle()
+
+    def _estimate_precision(self):
+        if not self._annotation_errors:
+            self._precision_label.setText("No annotations yet")
+            return
+
+        if isinstance(self._edge_sampler, DUCBEdgeSampler):
+            from .precision import (
+                _h,
+                estimate_precision_ducb,
+                get_precision_estimate_at_end,
+            )
+
+            n = self._edge_sampler.total_count()
+            c, p = estimate_precision_ducb(self._annotation_errors, n)
+            precision = get_precision_estimate_at_end(n, n, c, p)
+
+            if precision is None:
+                self._precision_label.setText("Fit failed")
+                return
+            self._precision_label.setText(f"{precision:.3f} (c={c:.2f}, p={p:.3f})")
+            t_arr = np.arange(1, len(self._annotation_errors) + 1, dtype=float)
+            h_vals = _h(t_arr, n, c, p)
+            self._estimate_line.set_data(t_arr - 1, 1.0 - h_vals)
+        else:
+            from .precision import estimate_precision_simple
+
+            precision = estimate_precision_simple(self._annotation_errors)
+            if precision is None:
+                self._precision_label.setText("No annotations yet")
+                return
+            self._precision_label.setText(f"{precision:.3f}")
+            x_end = len(self._annotation_errors) - 1
+            error_rate = 1.0 - precision
+            self._estimate_line.set_data([0, x_end], [error_rate, error_rate])
+
+        self._precision_canvas.draw_idle()
 
     def _save_annotated_graphs(self):
         dir_path = self._export_path.value
