@@ -61,6 +61,7 @@ napari = [
     "arboretum",
     "napari<0.7.0",
     "napari-graph",
+    "matplotlib",
 ]
 test = ["pytest>=6.0", "napari[all,testing]"]
 dev = ["pre-commit"]
