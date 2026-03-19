@@ -147,6 +147,7 @@ class TrackAnnotator(QWidget):
 
         # sampler settings panel (built after other widgets so it can reference them)
         self._sampler_settings = self._build_sampler_settings()
+        self._sampler_settings.expand(animate=False)
         self._precision_panel = self._build_precision_panel()
 
         # widgets for counts
@@ -937,7 +938,6 @@ class TrackAnnotator(QWidget):
         from superqt import QCollapsible
 
         collapsible = QCollapsible("Sampler Settings")
-        collapsible.collapse(animate=False)
 
         self._sampler_type_combo = create_widget(
             value="Random",
