@@ -1106,21 +1106,31 @@ class TrackAnnotator(QWidget):
         collapsible = QCollapsible("Precision Estimate")
         collapsible.collapse(animate=False)
 
-        fig = Figure(figsize=(4, 1.8), tight_layout=True)
+        fig = Figure(figsize=(4, 2.3))
         canvas = FigureCanvasQTAgg(fig)
-        canvas.setMaximumHeight(200)
+        canvas.setMaximumHeight(238)
         self._precision_fig = fig
         self._precision_canvas = canvas
 
-        ax = fig.add_subplot(111)
+        ax = fig.add_subplot()
         ax.set_xlabel("Annotation step")
-        ax.set_ylabel("Error rate")
-        ax.set_ylim(0, 1)
+        ax.set_ylabel("Precision")
+        ax.set_ylim(-0.05, 1.05)
         self._precision_ax = ax
 
-        (self._rolling_line,) = ax.plot([], [], label="Rolling error rate (100)")
+        (self._rolling_line,) = ax.plot([], [], label="Rolling precision (last 100)")
         (self._estimate_line,) = ax.plot(
-            [], [], linestyle="--", color="red", label="Estimate"
+            [], [], linestyle="--", color="red", label="Estimated precision"
+        )
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=0.28)
+        ax.legend(
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.005),
+            bbox_transform=fig.transFigure,
+            ncol=2,
+            fontsize="x-small",
+            frameon=False,
         )
 
         button_row = QWidget()
@@ -1145,7 +1155,7 @@ class TrackAnnotator(QWidget):
         if len(rates) == 0:
             return
         x = np.arange(len(rates))
-        self._rolling_line.set_data(x, rates)
+        self._rolling_line.set_data(x, 1.0 - rates)
         self._precision_ax.relim()
         self._precision_ax.autoscale_view(scaley=False)
         self._precision_canvas.draw_idle()
@@ -1164,15 +1174,14 @@ class TrackAnnotator(QWidget):
 
             n = self._edge_sampler.total_count()
             c, p = estimate_precision_ducb(self._annotation_errors, n)
-            precision = get_precision_estimate_at_end(n, n, c, p)
-
-            if precision is None:
+            if c is None:
                 self._precision_label.setText("Fit failed")
                 return
+            precision = get_precision_estimate_at_end(n, n, c, p)
             self._precision_label.setText(f"{precision:.3f} (c={c:.2f}, p={p:.3f})")
             t_arr = np.arange(1, len(self._annotation_errors) + 1, dtype=float)
             h_vals = _h(t_arr, n, c, p)
-            self._estimate_line.set_data(t_arr - 1, 1.0 - h_vals)
+            self._estimate_line.set_data(t_arr - 1, h_vals)
         else:
             from .precision import estimate_precision_simple
 
@@ -1182,8 +1191,7 @@ class TrackAnnotator(QWidget):
                 return
             self._precision_label.setText(f"{precision:.3f}")
             x_end = len(self._annotation_errors) - 1
-            error_rate = 1.0 - precision
-            self._estimate_line.set_data([0, x_end], [error_rate, error_rate])
+            self._estimate_line.set_data([0, x_end], [precision, precision])
 
         self._precision_canvas.draw_idle()
 

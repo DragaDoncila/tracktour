@@ -86,7 +86,7 @@ def estimate_precision_ducb(errors, n_total):
     """
     T = len(errors)
     if T < 2:
-        return None, None, None
+        return None, None
 
     t_arr = np.arange(1, T + 1, dtype=float)
     cumulative = np.cumsum(errors)
