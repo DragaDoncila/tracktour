@@ -1,7 +1,6 @@
 """Tests for edge sampling strategies."""
 
 import networkx as nx
-import pandas as pd
 import pytest
 
 from tracktour._napari.track_annotator.samplers import (
@@ -16,28 +15,25 @@ from tracktour._napari.track_annotator.samplers import (
 
 
 @pytest.fixture
-def simple_edges_df():
+def simple_graph():
     """Four solution edges with one feature column 'score'."""
-    return pd.DataFrame(
-        {
-            "u": [0, 1, 2, 3],
-            "v": [4, 5, 6, 7],
-            "score": [0.9, 0.1, 0.5, 0.3],
-        }
-    )
+    g = nx.DiGraph()
+    g.add_edge(0, 4, score=0.9)
+    g.add_edge(1, 5, score=0.1)
+    g.add_edge(2, 6, score=0.5)
+    g.add_edge(3, 7, score=0.3)
+    return g
 
 
 @pytest.fixture
-def two_arm_edges_df():
+def two_arm_graph():
     """Four edges with two feature columns."""
-    return pd.DataFrame(
-        {
-            "u": [0, 1, 2, 3],
-            "v": [4, 5, 6, 7],
-            "score": [0.9, 0.1, 0.5, 0.3],
-            "rank": [3, 0, 2, 1],
-        }
-    )
+    g = nx.DiGraph()
+    g.add_edge(0, 4, score=0.9, rank=3)
+    g.add_edge(1, 5, score=0.1, rank=0)
+    g.add_edge(2, 6, score=0.5, rank=2)
+    g.add_edge(3, 7, score=0.3, rank=1)
+    return g
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +46,9 @@ class TestRandomEdgeSampler:
 
     @pytest.fixture
     def edges(self):
-        return [(0, 1), (1, 2), (2, 3), (3, 4)]
+        g = nx.DiGraph()
+        g.add_edges_from([(0, 1), (1, 2), (2, 3), (3, 4)])
+        return g
 
     def test_current_returns_tuple(self, edges):
         sampler = RandomEdgeSampler(edges, seed=0)
@@ -75,7 +73,7 @@ class TestRandomEdgeSampler:
 
     def test_next_returns_none_at_end(self, edges):
         sampler = RandomEdgeSampler(edges, seed=0)
-        for _ in range(len(edges) - 1):
+        for _ in range(edges.number_of_edges() - 1):
             assert sampler.next() is not None
         assert sampler.next() is None
 
@@ -104,22 +102,14 @@ class TestRandomEdgeSampler:
     def test_at_end(self, edges):
         sampler = RandomEdgeSampler(edges, seed=0)
         assert not sampler.at_end()
-        for _ in range(len(edges) - 1):
+        for _ in range(edges.number_of_edges() - 1):
             sampler.next()
         assert sampler.at_end()
 
-    def test_handles_numpy_arrays(self):
-        import numpy as np
-
-        edges = np.array([[0, 1], [1, 2], [2, 3]])
-        sampler = RandomEdgeSampler(edges, seed=0)
-        edge = sampler.current()
-        assert isinstance(edge, tuple)
-        assert isinstance(edge[0], int)
-        assert isinstance(edge[1], int)
-
     def test_single_edge(self):
-        sampler = RandomEdgeSampler([(0, 1)], seed=0)
+        g = nx.DiGraph()
+        g.add_edge(0, 1)
+        sampler = RandomEdgeSampler(g, seed=0)
         assert sampler.at_start()
         assert sampler.at_end()
         assert sampler.current() == (0, 1)
@@ -132,75 +122,76 @@ class TestRandomEdgeSampler:
 # ---------------------------------------------------------------------------
 
 
-def test_ducb_current_returns_tuple(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_current_returns_tuple(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     edge = sampler.current()
     assert isinstance(edge, tuple)
     assert len(edge) == 2
 
 
-def test_ducb_total_count(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_total_count(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     assert sampler.total_count() == 4
 
 
-def test_ducb_current_index_starts_at_zero(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_current_index_starts_at_zero(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     assert sampler.current_index() == 0
 
 
-def test_ducb_at_start_initially(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_at_start_initially(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     assert sampler.at_start()
 
 
-def test_ducb_not_at_end_initially_with_multiple_edges(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_not_at_end_initially_with_multiple_edges(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     assert not sampler.at_end()
 
 
 def test_ducb_single_edge_at_start_and_end():
-    df = pd.DataFrame({"u": [0], "v": [1], "score": [0.5]})
-    sampler = DUCBEdgeSampler(df, {"score": True})
+    g = nx.DiGraph()
+    g.add_edge(0, 1, score=0.5)
+    sampler = DUCBEdgeSampler(g, {"score": True})
     assert sampler.at_start()
     assert sampler.at_end()
     assert sampler.next() is None
     assert sampler.previous() is None
 
 
-def test_ducb_ascending_first_edge_has_smallest_score(simple_edges_df):
-    # ascending=True: smallest score first (row with score=0.1, u=1, v=5)
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_ascending_first_edge_has_smallest_score(simple_graph):
+    # ascending=True: smallest score first (edge with score=0.1, u=1, v=5)
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     assert sampler.current() == (1, 5)
 
 
-def test_ducb_descending_first_edge_has_largest_score(simple_edges_df):
-    # ascending=False: largest score first (row with score=0.9, u=0, v=4)
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": False})
+def test_ducb_descending_first_edge_has_largest_score(simple_graph):
+    # ascending=False: largest score first (edge with score=0.9, u=0, v=4)
+    sampler = DUCBEdgeSampler(simple_graph, {"score": False})
     assert sampler.current() == (0, 4)
 
 
-def test_ducb_next_advances_index(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_next_advances_index(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.next()
     assert sampler.current_index() == 1
 
 
-def test_ducb_next_returns_edge_tuple(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_next_returns_edge_tuple(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     edge = sampler.next()
     assert isinstance(edge, tuple)
     assert len(edge) == 2
 
 
-def test_ducb_previous_returns_none_at_start(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_previous_returns_none_at_start(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     assert sampler.previous() is None
     assert sampler.current_index() == 0
 
 
-def test_ducb_previous_goes_back(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_previous_goes_back(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     first_edge = sampler.current()
     sampler.next()
     prev = sampler.previous()
@@ -208,8 +199,8 @@ def test_ducb_previous_goes_back(simple_edges_df):
     assert sampler.current_index() == 0
 
 
-def test_ducb_previous_replays_history_not_rerun_ucb(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_previous_replays_history_not_rerun_ucb(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     first_edge = sampler.current()
     sampler.next()
     second_edge = sampler.current()
@@ -220,47 +211,46 @@ def test_ducb_previous_replays_history_not_rerun_ucb(simple_edges_df):
     assert sampler.current() == second_edge
 
 
-def test_ducb_exhaust_all_edges_returns_none(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
-    for _ in range(len(simple_edges_df) - 1):
+def test_ducb_exhaust_all_edges_returns_none(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
+    for _ in range(simple_graph.number_of_edges() - 1):
         result = sampler.next()
         assert result is not None
     assert sampler.next() is None
 
 
-def test_ducb_at_end_after_exhausting_all_edges(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
-    for _ in range(len(simple_edges_df) - 1):
+def test_ducb_at_end_after_exhausting_all_edges(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
+    for _ in range(simple_graph.number_of_edges() - 1):
         sampler.next()
     assert sampler.at_end()
 
 
-def test_ducb_visits_all_edges_exactly_once(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_visits_all_edges_exactly_once(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     seen = {sampler.current()}
     while not sampler.at_end():
         seen.add(sampler.next())
-    expected = set(zip(simple_edges_df.u, simple_edges_df.v))
-    assert seen == expected
+    assert seen == set(simple_graph.edges())
 
 
-def test_ducb_n_incremented_at_selection_not_at_reward(simple_edges_df):
+def test_ducb_n_incremented_at_selection_not_at_reward(simple_graph):
     # N is incremented when an arm is selected (first edge picked in __init__)
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     assert sampler.discounted_arm_played["score"] == 1.0  # from the initial pick
     # provide_reward does not change N
     sampler.provide_reward(1.0)
     assert sampler.discounted_arm_played["score"] == 1.0
 
 
-def test_ducb_provide_reward_updates_s(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_provide_reward_updates_s(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.provide_reward(1.0)
     assert sampler.discounted_arm_rewards["score"] == 1.0
 
 
-def test_ducb_provide_reward_zero_updates_s_to_zero(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_provide_reward_zero_updates_s_to_zero(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.provide_reward(0.0)
     assert sampler.discounted_arm_rewards["score"] == 0.0
     assert (
@@ -268,8 +258,8 @@ def test_ducb_provide_reward_zero_updates_s_to_zero(simple_edges_df):
     )  # play count from selection, unchanged by reward
 
 
-def test_ducb_n_and_s_discounted_on_next_call(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_n_and_s_discounted_on_next_call(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     gamma = sampler._gamma
     assert sampler.discounted_arm_played["score"] == 1.0
     sampler.provide_reward(1.0)
@@ -279,31 +269,31 @@ def test_ducb_n_and_s_discounted_on_next_call(simple_edges_df):
     assert sampler.discounted_arm_rewards["score"] == pytest.approx(gamma)
 
 
-def test_ducb_two_arms_each_played_before_ucb(two_arm_edges_df):
+def test_ducb_two_arms_each_played_before_ucb(two_arm_graph):
     # Both arms have N=0 at start, so each is played once before UCB kicks in
-    sampler = DUCBEdgeSampler(two_arm_edges_df, {"score": True, "rank": True})
+    sampler = DUCBEdgeSampler(two_arm_graph, {"score": True, "rank": True})
     _, arm0, _ = sampler._history[0]
     sampler.next()
     _, arm1, _ = sampler._history[1]
     assert {arm0, arm1} == {"score", "rank"}
 
 
-def test_ducb_provide_reward_stores_in_history(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_provide_reward_stores_in_history(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.provide_reward(1.0)
     assert sampler._history[0][2] == 1.0
 
 
-def test_ducb_provide_reward_same_value_is_noop(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_provide_reward_same_value_is_noop(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.provide_reward(1.0)
     rewards_before = sampler.discounted_arm_rewards["score"]
     sampler.provide_reward(1.0)
     assert sampler.discounted_arm_rewards["score"] == rewards_before
 
 
-def test_ducb_retroactive_reward_sets_dirty_flag(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_retroactive_reward_sets_dirty_flag(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.provide_reward(1.0)
     sampler.next()
     sampler.provide_reward(0.0)
@@ -313,8 +303,8 @@ def test_ducb_retroactive_reward_sets_dirty_flag(simple_edges_df):
     assert sampler._history_dirty
 
 
-def test_ducb_retroactive_reward_same_value_does_not_set_dirty(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_retroactive_reward_same_value_does_not_set_dirty(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.provide_reward(1.0)
     sampler.next()
     sampler.previous()
@@ -322,8 +312,8 @@ def test_ducb_retroactive_reward_same_value_does_not_set_dirty(simple_edges_df):
     assert not sampler._history_dirty
 
 
-def test_ducb_recompute_clears_dirty_flag(simple_edges_df):
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+def test_ducb_recompute_clears_dirty_flag(simple_graph):
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.provide_reward(1.0)
     sampler.next()
     sampler.previous()
@@ -334,9 +324,9 @@ def test_ducb_recompute_clears_dirty_flag(simple_edges_df):
     assert not sampler._history_dirty
 
 
-def test_ducb_recompute_bandit_state_matches_incremental(simple_edges_df):
+def test_ducb_recompute_bandit_state_matches_incremental(simple_graph):
     # Build a sampler the normal incremental way
-    sampler = DUCBEdgeSampler(simple_edges_df, {"score": True})
+    sampler = DUCBEdgeSampler(simple_graph, {"score": True})
     sampler.provide_reward(1.0)
     sampler.next()
     sampler.provide_reward(0.0)
@@ -350,9 +340,10 @@ def test_ducb_recompute_bandit_state_matches_incremental(simple_edges_df):
 
 
 def test_ducb_empty_bandit_arms_raises():
-    df = pd.DataFrame({"u": [0], "v": [1], "score": [0.5]})
+    g = nx.DiGraph()
+    g.add_edge(0, 1, score=0.5)
     with pytest.raises(ValueError):
-        DUCBEdgeSampler(df, {})
+        DUCBEdgeSampler(g, {})
 
 
 # ---------------------------------------------------------------------------
