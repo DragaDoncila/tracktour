@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 import networkx as nx
-import pandas as pd
 
 
 class EdgeSampler(ABC):
@@ -55,8 +54,8 @@ class EdgeSampler(ABC):
 class RandomEdgeSampler(EdgeSampler):
     """Samples edges in random order with optional seeded shuffle."""
 
-    def __init__(self, edges: list[tuple[int, int]], seed: Optional[int] = None):
-        self._edges: list[tuple[int, int]] = [(int(e[0]), int(e[1])) for e in edges]
+    def __init__(self, nxg: nx.DiGraph, seed: Optional[int] = None):
+        self._edges: list[tuple[int, int]] = list(nxg.edges())
         if seed is not None:
             random.seed(seed)
         random.shuffle(self._edges)
@@ -192,10 +191,11 @@ class DUCBEdgeSampler(EdgeSampler):
 
     Parameters
     ----------
-    edges_df : pd.DataFrame
-        Solution edges with feature columns. Must have ``u`` and ``v`` columns.
+    nxg : nx.DiGraph
+        Solution graph. Each edge must carry the feature attributes named in
+        ``bandit_arms``.
     bandit_arms : dict[str, bool]
-        Mapping of feature column name → ascending flag.
+        Mapping of edge-attribute name → ascending flag.
         ``ascending=True`` means smaller values are sorted first (i.e. small
         feature value = more likely to be an error).
     """
@@ -205,21 +205,24 @@ class DUCBEdgeSampler(EdgeSampler):
 
     def __init__(
         self,
-        edges_df: pd.DataFrame,
+        nxg: nx.DiGraph,
         bandit_arms: dict[str, bool],
     ):
         if not bandit_arms:
             raise ValueError("bandit_arms must contain at least one arm.")
 
-        self._total = len(edges_df)
+        edges = list(nxg.edges())
+        self._total = len(edges)
         self._gamma = 1 - 1 / (4 * math.sqrt(2 * self._total))
 
-        # Per-arm sorted list of DataFrame indices (not reset integer positions)
-        self._arm_sorted: dict[str, list] = {}
+        # Per-arm sorted list of (u, v) tuples
+        self._arm_sorted: dict[str, list[tuple[int, int]]] = {}
         self._arm_ptr: dict[str, int] = {}
         for arm, ascending in bandit_arms.items():
-            self._arm_sorted[arm] = list(
-                edges_df.sort_values(arm, ascending=ascending).index
+            self._arm_sorted[arm] = sorted(
+                edges,
+                key=lambda e, a=arm: nxg.edges[e][a],
+                reverse=not ascending,
             )
             self._arm_ptr[arm] = 0
 
@@ -231,14 +234,9 @@ class DUCBEdgeSampler(EdgeSampler):
         # is tried at least once before UCB scores are compared.
         self._arm_play_count: dict[str, int] = {arm: 0 for arm in bandit_arms}
 
-        # Build lookup from df index → (u, v)
-        self._edge_lookup: dict = {
-            row.Index: (int(row.u), int(row.v)) for row in edges_df.itertuples()
-        }
-
         # Navigation state
-        self._visited: set = set()
-        # History entries: [df_index, arm, reward] — mutable lists so reward can be updated.
+        self._visited: set[tuple[int, int]] = set()
+        # History entries: [(u, v), arm, reward] — mutable lists so reward can be updated.
         # reward starts as None until provide_reward is called for that position.
         self._history: list[list] = []
         self._hist_pos: int = -1
@@ -254,16 +252,16 @@ class DUCBEdgeSampler(EdgeSampler):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _next_unvisited(self, arm: str) -> Optional[int]:
-        """Return the df-index of the next unvisited edge for *arm*, or None."""
+    def _next_unvisited(self, arm: str) -> Optional[tuple[int, int]]:
+        """Return the next unvisited edge for *arm*, or None."""
         sorted_list = self._arm_sorted[arm]
         ptr = self._arm_ptr[arm]
         while ptr < len(sorted_list):
-            idx = sorted_list[ptr]
+            edge = sorted_list[ptr]
             ptr += 1
-            if idx not in self._visited:
+            if edge not in self._visited:
                 self._arm_ptr[arm] = ptr
-                return idx
+                return edge
         self._arm_ptr[arm] = ptr
         return None
 
@@ -338,13 +336,13 @@ class DUCBEdgeSampler(EdgeSampler):
         arm = self._select_arm()
         if arm is None:
             return False
-        df_idx = self._next_unvisited(arm)
-        if df_idx is None:
+        edge = self._next_unvisited(arm)
+        if edge is None:
             return False
         self.discounted_arm_played[arm] += 1.0
         self._arm_play_count[arm] += 1
-        self._visited.add(df_idx)
-        self._history.append([df_idx, arm, None])
+        self._visited.add(edge)
+        self._history.append([edge, arm, None])
         return True
 
     # ------------------------------------------------------------------
@@ -352,8 +350,7 @@ class DUCBEdgeSampler(EdgeSampler):
     # ------------------------------------------------------------------
 
     def current(self) -> tuple[int, int]:
-        df_idx, _, _ = self._history[self._hist_pos]
-        return self._edge_lookup[df_idx]
+        return self._history[self._hist_pos][0]
 
     def next(self) -> Optional[tuple[int, int]]:
         if self._hist_pos < len(self._history) - 1:

@@ -46,6 +46,11 @@ _EDGE_NON_FEATURE_COLS = frozenset(
         "model_ub",
         "bandit_rank",
         "bandit_arm",
+        # intermediate/not that useful features features we don't want
+        "sa_obj_low",
+        "sa_obj_up",
+        "softmax_entropy",
+        "parental_softmax",
     }
 )
 
@@ -86,7 +91,7 @@ class TrackAnnotator(QWidget):
         self._controller: AnnotationController = None
 
         # D-UCB sampler state
-        self._ducb_edges_df = None
+        self._ducb_nxg = None
         self._feature_rows: list[tuple] = []  # (col_name, QCheckBox, QToggleSwitch)
 
         # layer selection widgets
@@ -974,7 +979,7 @@ class TrackAnnotator(QWidget):
         is_ducb = value == "D-UCB"
         self._ducb_config_widget.setVisible(is_ducb)
         self._apply_random_button.native.setVisible(not is_ducb)
-        if is_ducb and self._ducb_edges_df is None:
+        if is_ducb and self._ducb_nxg is None:
             self._try_load_edges_from_layer()
         # Trajectory and Random both use _apply_random_button (shared "Apply" button)
 
@@ -982,17 +987,17 @@ class TrackAnnotator(QWidget):
         """Auto-populate feature table from tracked metadata if available."""
         if self._track_combo.value is None:
             return
-        tracked = self._track_combo.value.metadata.get("tracked")
-        if tracked is None or tracked.all_edges is None:
-            return
-        ae = tracked.all_edges
-        sol_edges = ae[(ae.u >= 0) & (ae.v >= 0) & (ae.flow > 0)].copy()
-        self._populate_edges(sol_edges, source="tracks layer")
+        if nxg := self._track_combo.value.metadata.get("nxg"):
+            self._populate_edges(nxg, source=self._track_combo.value.name)
 
-    def _populate_edges(self, edges_df, source=""):
-        self._ducb_edges_df = edges_df
-        feature_cols = [c for c in edges_df.columns if c not in _EDGE_NON_FEATURE_COLS]
-        n = len(edges_df)
+    def _populate_edges(self, nxg, source=""):
+        self._ducb_nxg = nxg
+        if nxg.number_of_edges() > 0:
+            sample_attrs = next(iter(nxg.edges(data=True)))[2]
+            feature_cols = [k for k in sample_attrs if k not in _EDGE_NON_FEATURE_COLS]
+        else:
+            feature_cols = []
+        n = nxg.number_of_edges()
         m = len(feature_cols)
         src_label = f" (from {source})" if source else ""
         self._edges_status_label.setText(f"{n} edges, {m} features{src_label}")
@@ -1038,11 +1043,11 @@ class TrackAnnotator(QWidget):
         nxg = self._state.original_graph
 
         if sampler_type == "Random":
-            self._edge_sampler = RandomEdgeSampler(list(nxg.edges), seed=0)
+            self._edge_sampler = RandomEdgeSampler(nxg, seed=0)
         elif sampler_type == "Trajectory":
             self._edge_sampler = TrajectoryEdgeSampler(nxg, seed=0)
         else:
-            if self._ducb_edges_df is None:
+            if self._ducb_nxg is None:
                 show_info(
                     "D-UCB requires a tracks layer produced by the TracktourSolver "
                     "(the layer must have a 'tracked' attribute with edge features). "
@@ -1057,16 +1062,7 @@ class TrackAnnotator(QWidget):
             if not bandit_arms:
                 show_info("Select at least one feature as a bandit arm.")
                 return
-            # filter edges_df to only solution edges present in nxg
-            solution_pairs = set(nxg.edges)
-            mask = self._ducb_edges_df.apply(
-                lambda r: (int(r.u), int(r.v)) in solution_pairs, axis=1
-            )
-            edges_df = self._ducb_edges_df[mask]
-            if edges_df.empty:
-                show_info("No edges match the current solution graph.")
-                return
-            self._edge_sampler = DUCBEdgeSampler(edges_df, bandit_arms)
+            self._edge_sampler = DUCBEdgeSampler(self._ducb_nxg, bandit_arms)
 
         self._display_edge()
         self._next_edge_button.enabled = True

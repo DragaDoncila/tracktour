@@ -89,8 +89,6 @@ class TrackingSolver(Container):
             tracker.scale,
             segmentation,
         )
-        tracks.metadata["tracked"] = tracked
-
         self._viewer.add_layer(coloured_points)
         self._viewer.add_layer(coloured_labels)
         self._viewer.add_layer(tracks)
