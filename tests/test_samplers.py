@@ -1,11 +1,13 @@
 """Tests for edge sampling strategies."""
 
+import networkx as nx
 import pandas as pd
 import pytest
 
 from tracktour._napari.track_annotator.samplers import (
     DUCBEdgeSampler,
     RandomEdgeSampler,
+    TrajectoryEdgeSampler,
 )
 
 # ---------------------------------------------------------------------------
@@ -351,3 +353,120 @@ def test_ducb_empty_bandit_arms_raises():
     df = pd.DataFrame({"u": [0], "v": [1], "score": [0.5]})
     with pytest.raises(ValueError):
         DUCBEdgeSampler(df, {})
+
+
+# ---------------------------------------------------------------------------
+# TrajectoryEdgeSampler
+# ---------------------------------------------------------------------------
+
+# Shared graphs for trajectory tests
+
+
+def _linear_graph():
+    """0→1→2→3 (single trajectory, no divisions)."""
+    g = nx.DiGraph()
+    g.add_edges_from([(0, 1), (1, 2), (2, 3)])
+    return g
+
+
+def _division_graph():
+    """0→1→2 and 1→3 (one division at node 1)."""
+    g = nx.DiGraph()
+    g.add_edges_from([(0, 1), (1, 2), (1, 3)])
+    return g
+
+
+def _two_root_graph():
+    """Two independent chains: 0→1→2 and 3→4→5."""
+    g = nx.DiGraph()
+    g.add_edges_from([(0, 1), (1, 2), (3, 4), (4, 5)])
+    return g
+
+
+def test_trajectory_visits_all_edges():
+    sampler = TrajectoryEdgeSampler(_linear_graph(), seed=0)
+    assert sampler.total_count() == 3
+
+
+def test_trajectory_linear_order_is_root_to_leaf():
+    sampler = TrajectoryEdgeSampler(_linear_graph(), seed=0)
+    edges = [sampler.current()]
+    for _ in range(sampler.total_count() - 1):
+        sampler.next()
+        edges.append(sampler.current())
+    assert edges == [(0, 1), (1, 2), (2, 3)]
+
+
+def test_trajectory_division_first_edge_is_root():
+    sampler = TrajectoryEdgeSampler(_division_graph(), seed=0)
+    assert sampler.current()[0] == 0
+
+
+def test_trajectory_division_second_edge_continues_from_first_child():
+    # After (0,1), the next edge should start from 1 (the child).
+    sampler = TrajectoryEdgeSampler(_division_graph(), seed=0)
+    first = sampler.current()
+    sampler.next()
+    second = sampler.current()
+    assert first == (0, 1)
+    assert second[0] == 1  # continues down from node 1
+
+
+def test_trajectory_division_deferred_branch_visited_last():
+    # After the first branch (0→1→child_a), the deferred child_b is visited.
+    sampler = TrajectoryEdgeSampler(_division_graph(), seed=0)
+    edges = [sampler.current()]
+    for _ in range(sampler.total_count() - 1):
+        sampler.next()
+        edges.append(sampler.current())
+    # All three edges must appear; first two must share a source node
+    assert len(edges) == 3
+    assert edges[0] == (0, 1)
+    assert edges[1][0] == 1
+    assert edges[2][0] == 1
+    assert edges[1][1] != edges[2][1]  # two different children of node 1
+
+
+def test_trajectory_two_roots_each_trajectory_is_contiguous():
+    # One root's chain should appear consecutively, then the other's.
+    sampler = TrajectoryEdgeSampler(_two_root_graph(), seed=0)
+    edges = [sampler.current()]
+    for _ in range(sampler.total_count() - 1):
+        sampler.next()
+        edges.append(sampler.current())
+    # Edges from each root form contiguous blocks
+    root_a = edges[0][0]  # whichever root came first
+    root_b = 3 if root_a == 0 else 0
+    first_half = [e for e in edges if e[0] in (root_a, root_a + 1)]
+    second_half = [e for e in edges if e[0] in (root_b, root_b + 1)]
+    assert len(first_half) == 2
+    assert len(second_half) == 2
+    assert edges.index(first_half[0]) < edges.index(second_half[0])
+
+
+def test_trajectory_navigation_previous():
+    sampler = TrajectoryEdgeSampler(_linear_graph(), seed=0)
+    first = sampler.current()
+    sampler.next()
+    sampler.previous()
+    assert sampler.current() == first
+
+
+def test_trajectory_at_start_initially():
+    sampler = TrajectoryEdgeSampler(_linear_graph(), seed=0)
+    assert sampler.at_start()
+
+
+def test_trajectory_at_end_after_full_traversal():
+    sampler = TrajectoryEdgeSampler(_linear_graph(), seed=0)
+    for _ in range(sampler.total_count() - 1):
+        sampler.next()
+    assert sampler.at_end()
+
+
+def test_trajectory_different_seeds_may_differ_on_division():
+    # With a division, different seeds should (usually) produce different orders.
+    s0 = TrajectoryEdgeSampler(_division_graph(), seed=0)
+    s1 = TrajectoryEdgeSampler(_division_graph(), seed=42)
+    # Both orderings are valid; we just check they cover the same edges
+    assert set(tuple(e) for e in s0._edges) == set(tuple(e) for e in s1._edges)
