@@ -46,6 +46,11 @@ _EDGE_NON_FEATURE_COLS = frozenset(
         "model_ub",
         "bandit_rank",
         "bandit_arm",
+        # intermediate/not that useful features features we don't want
+        "sa_obj_low",
+        "sa_obj_up",
+        "softmax_entropy",
+        "parental_softmax",
     }
 )
 
@@ -982,11 +987,8 @@ class TrackAnnotator(QWidget):
         """Auto-populate feature table from tracked metadata if available."""
         if self._track_combo.value is None:
             return
-        tracked = self._track_combo.value.metadata.get("tracked")
-        if tracked is None:
-            return
-        nxg = tracked.as_nx_digraph(include_all_attrs=True)
-        self._populate_edges(nxg, source="tracks layer")
+        if nxg := self._track_combo.value.metadata.get("nxg"):
+            self._populate_edges(nxg, source=self._track_combo.value.name)
 
     def _populate_edges(self, nxg, source=""):
         self._ducb_nxg = nxg
