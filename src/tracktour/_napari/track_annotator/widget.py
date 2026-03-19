@@ -456,9 +456,41 @@ class TrackAnnotator(QWidget):
             # get center of the region for zooming
             camera_center = get_region_center(src_loc[1:], tgt_loc[1:])
         self._viewer.camera.center = np.multiply(camera_center, current_scale)
-        # TODO: should be dynamic based on data...
-        self._viewer.camera.zoom = 30
+        self._viewer.camera.zoom = self._compute_edge_zoom(
+            src_loc, tgt_loc, current_scale, padding=50
+        )
         self._viewer.dims.current_step = current_step
+
+    def _compute_edge_zoom(self, src_loc, tgt_loc, current_scale, padding=50):
+        """Compute zoom so the camera fits both src and tgt with padding.
+
+        zoom = canvas_pixels / world_units.
+        In 2D view, matches canvas (width, height) to world (x, y).
+        In 3D view, uses min(canvas) / max(spatial_extent) as a conservative fit.
+        Frame dimension is always excluded.
+        """
+        ndisplay = self._viewer.dims.ndisplay
+        scale_nd = current_scale[-ndisplay:]
+        src_world = src_loc[-ndisplay:] * scale_nd
+        tgt_world = tgt_loc[-ndisplay:] * scale_nd
+        bbox_size = np.maximum(src_world, tgt_world) - np.minimum(src_world, tgt_world)
+        bbox_size = np.maximum(bbox_size, 1.0) + 2 * padding
+
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", message="Public access to Window.qt_viewer is deprecated"
+                )
+                canvas_size = np.array(self._viewer.window.qt_viewer.canvas.size)
+            if ndisplay == 2:
+                # canvas.size is (width, height); bbox_size is [y_world, x_world]
+                zoom = np.min(canvas_size / bbox_size[::-1])
+            else:
+                # 3D arcball: use most constraining axis conservatively
+                zoom = np.min(canvas_size) / np.max(bbox_size)
+        except Exception:
+            zoom = 30
+        return zoom
 
     def _setup_thick_slicing(self, src_loc, tgt_loc, current_scale):
         """Turn on out_of_slice display for points and vectors.
