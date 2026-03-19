@@ -5,6 +5,7 @@ import random
 from abc import ABC, abstractmethod
 from typing import Optional
 
+import networkx as nx
 import pandas as pd
 
 
@@ -60,6 +61,88 @@ class RandomEdgeSampler(EdgeSampler):
             random.seed(seed)
         random.shuffle(self._edges)
         self._idx = 0
+
+    def current(self) -> tuple[int, int]:
+        return self._edges[self._idx]
+
+    def next(self) -> Optional[tuple[int, int]]:
+        if self._idx < len(self._edges) - 1:
+            self._idx += 1
+            return self.current()
+        return None
+
+    def previous(self) -> Optional[tuple[int, int]]:
+        if self._idx > 0:
+            self._idx -= 1
+            return self.current()
+        return None
+
+    def at_start(self) -> bool:
+        return self._idx == 0
+
+    def at_end(self) -> bool:
+        return self._idx >= len(self._edges) - 1
+
+    def total_count(self) -> int:
+        return len(self._edges)
+
+    def current_index(self) -> int:
+        return self._idx
+
+
+class TrajectoryEdgeSampler(EdgeSampler):
+    """Samples edges in trajectory order via depth-first traversal of the solution graph.
+
+    Starts from randomly ordered root nodes (in-degree 0). Follows each
+    trajectory from root to leaf, visiting every edge along the way before
+    moving to the next trajectory. At division nodes (two children), one
+    branch is followed immediately while the other is deferred to a stack and
+    visited after the current branch is exhausted.
+
+    The full traversal order is determined once at construction time.
+
+    Parameters
+    ----------
+    nxg : nx.DiGraph
+        The solution graph. Nodes are detection IDs; edges are (parent, child).
+    seed : int, optional
+        Random seed for root ordering and division child ordering.
+    """
+
+    def __init__(self, nxg: nx.DiGraph, seed: Optional[int] = None):
+        rng = random.Random(seed)
+        self._edges = self._build_order(nxg, rng)
+        self._idx = 0
+
+    @staticmethod
+    def _build_order(nxg: nx.DiGraph, rng: random.Random) -> list[tuple[int, int]]:
+        roots = [n for n in nxg.nodes if nxg.in_degree(n) == 0]
+        rng.shuffle(roots)
+
+        order = []
+        # Stack holds (parent, child) pairs. Roots have parent=None.
+        # Reversed so the first root is on top.
+        stack = [(None, root) for root in reversed(roots)]
+
+        while stack:
+            parent, current = stack.pop()
+            if parent is not None:
+                # Deferred branch — append its incoming edge before walking forward.
+                order.append((parent, current))
+
+            # Walk forward along this trajectory until a leaf.
+            while True:
+                children = list(nxg.successors(current))
+                if not children:
+                    break  # leaf — trajectory complete
+                rng.shuffle(children)
+                order.append((current, children[0]))
+                # Defer all other children
+                for deferred in children[1:]:
+                    stack.append((current, deferred))
+                current = children[0]
+
+        return order
 
     def current(self) -> tuple[int, int]:
         return self._edges[self._idx]
