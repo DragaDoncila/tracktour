@@ -19,7 +19,7 @@ from .commands import (
     MarkNodeFPCommand,
 )
 from .controller import AnnotationController
-from .samplers import DUCBEdgeSampler, RandomEdgeSampler
+from .samplers import DUCBEdgeSampler, RandomEdgeSampler, TrajectoryEdgeSampler
 from .state import AnnotationState
 from .utils import (
     get_count_label_from_grid,
@@ -153,6 +153,7 @@ class TrackAnnotator(QWidget):
         self._save_annotations_button = PushButton(text="Save Annotations")
         self._save_annotations_button.clicked.connect(self._save_annotated_graphs)
         self._save_project_button = PushButton(text="Save Project")
+        self._save_project_button.enabled = False  # TODO: implement project saving
         self._view_ground_truth_button.clicked.connect(self._add_ground_truth_tracks)
 
         self._export_layout.addWidget(self._save_annotations_button.native)
@@ -921,7 +922,7 @@ class TrackAnnotator(QWidget):
 
         self._sampler_type_combo = create_widget(
             value="Random",
-            options={"choices": ["Random", "D-UCB"]},
+            options={"choices": ["Random", "Trajectory", "D-UCB"]},
             widget_type="ComboBox",
             label="Sampler Type",
         )
@@ -975,6 +976,7 @@ class TrackAnnotator(QWidget):
         self._apply_random_button.native.setVisible(not is_ducb)
         if is_ducb and self._ducb_edges_df is None:
             self._try_load_edges_from_layer()
+        # Trajectory and Random both use _apply_random_button (shared "Apply" button)
 
     def _try_load_edges_from_layer(self):
         """Auto-populate feature table from tracked metadata if available."""
@@ -1037,6 +1039,8 @@ class TrackAnnotator(QWidget):
 
         if sampler_type == "Random":
             self._edge_sampler = RandomEdgeSampler(list(nxg.edges), seed=0)
+        elif sampler_type == "Trajectory":
+            self._edge_sampler = TrajectoryEdgeSampler(nxg, seed=0)
         else:
             if self._ducb_edges_df is None:
                 show_info(
