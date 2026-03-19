@@ -153,6 +153,7 @@ class TrackAnnotator(QWidget):
         self._save_annotations_button = PushButton(text="Save Annotations")
         self._save_annotations_button.clicked.connect(self._save_annotated_graphs)
         self._save_project_button = PushButton(text="Save Project")
+        self._save_project_button.enabled = False  # TODO: implement project saving
         self._view_ground_truth_button.clicked.connect(self._add_ground_truth_tracks)
 
         self._export_layout.addWidget(self._save_annotations_button.native)
