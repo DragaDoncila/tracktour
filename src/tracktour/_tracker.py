@@ -515,6 +515,152 @@ class Tracker:
         else:
             return 0, edge["capacity"]
 
+    def _fix_virtual_edge(self, all_edges, real_node_id, virtual_vertex, direction, lb):
+        """Find and fix the lower bound on a virtual edge adjacent to a real node.
+
+        Parameters
+        ----------
+        all_edges : pd.DataFrame
+        real_node_id : int
+        virtual_vertex : int
+            One of the VirtualVertices int values (APP, TARGET, DIV, etc.)
+        direction : str
+            ``"in"`` if the edge runs virtual_vertex → real_node_id,
+            ``"out"`` if it runs real_node_id → virtual_vertex.
+        lb : float
+        """
+        if direction == "in":
+            u, v = virtual_vertex, real_node_id
+        else:
+            u, v = real_node_id, virtual_vertex
+        matches = all_edges[(all_edges.u == u) & (all_edges.v == v)]
+        if not matches.empty:
+            self.fix_edge_in_model(matches.index[0], u, v, lb=lb)
+
+    def warm_start_from_solution_graph(
+        self,
+        nxg: "nx.DiGraph",
+        frame_key: str = "t",
+        location_keys: Tuple[str, ...] = ("y", "x"),
+        value_key: Optional[str] = "label",
+        scale: Optional[Tuple[float, ...]] = None,
+    ) -> "Tracked":
+        """Build a live Gurobi model from a solution graph without re-solving.
+
+        Constructs a minimal candidate graph using only the solution edges,
+        then fixes lb=1 on every edge that is active in the solution:
+
+        - Migration edges (real node → real node present in nxg)
+        - Appearance edges for nodes with no incoming migration (in_degree == 0)
+        - Exit edges for nodes with no outgoing migration (out_degree == 0)
+        - Division edges for nodes with more than one outgoing migration
+
+        After fixing bounds, optimizes once (trivially fast) to populate flow
+        values, then returns a ``Tracked`` object with ``all_edges`` populated
+        so that ``fix_edge_in_model`` / ``_model.optimize()`` can be used for
+        partial re-solves.
+
+        Parameters
+        ----------
+        nxg : nx.DiGraph
+            Solution graph with node attributes at ``frame_key`` and
+            ``location_keys``.
+        frame_key : str
+            Node attribute name for the time/frame index.
+        location_keys : tuple of str
+            Node attribute names for spatial coordinates.
+        value_key : str, optional
+            Node attribute name for the detection label value.
+        scale : tuple of float, optional
+            Spatial scale per dimension. Defaults to all-ones if not provided.
+
+        Returns
+        -------
+        Tracked
+        """
+        if scale is not None:
+            self.scale = scale
+
+        self.frame_key = frame_key
+        self.location_keys = list(location_keys)
+        self.value_key = value_key
+
+        # Build detections DataFrame from real nodes (node_id >= 0)
+        real_nodes = {nid: attrs for nid, attrs in nxg.nodes(data=True) if nid >= 0}
+        det_records = [
+            {
+                "Index": nid,
+                frame_key: attrs[frame_key],
+                **{k: attrs[k] for k in location_keys},
+                "enter_cost": 1.0,
+                "exit_cost": 1.0,
+                "div_cost": 1.0,
+            }
+            for nid, attrs in real_nodes.items()
+        ]
+        detections = pd.DataFrame(det_records).set_index("Index").sort_values(frame_key)
+
+        # Build edge_df from solution migration edges only
+        sol_edges = [(u, v) for u, v in nxg.edges() if u >= 0 and v >= 0]
+        if sol_edges:
+            edge_df = pd.DataFrame(
+                {
+                    "u": [e[0] for e in sol_edges],
+                    "v": [e[1] for e in sol_edges],
+                    "capacity": Tracker.MERGE_EDGE_CAPACITY,
+                    "cost": [nxg.edges[u, v].get("cost", 1.0) for u, v in sol_edges],
+                    "distance": -1,
+                }
+            )
+        else:
+            edge_df = pd.DataFrame(columns=["u", "v", "capacity", "cost", "distance"])
+
+        # Build Gurobi model — sets _model, _all_edges, _model_flow_vars
+        _, all_edges, all_vertices, _ = self._to_gurobi_model(
+            detections, edge_df, frame_key, list(location_keys)
+        )
+
+        APP = VirtualVertices.APP.value
+        TARGET = VirtualVertices.TARGET.value
+        DIV = VirtualVertices.DIV.value
+
+        # Migration edges present in the solution
+        for u, v in nxg.edges():
+            if u < 0 or v < 0:
+                continue
+            matches = all_edges[(all_edges.u == u) & (all_edges.v == v)]
+            if not matches.empty:
+                self.fix_edge_in_model(matches.index[0], u, v, lb=1)
+
+        # Virtual edges — one pass through real nodes
+        for node_id in real_nodes:
+            if nxg.in_degree(node_id) == 0:
+                self._fix_virtual_edge(all_edges, node_id, APP, "in", lb=1)
+            if nxg.out_degree(node_id) == 0:
+                self._fix_virtual_edge(all_edges, node_id, TARGET, "out", lb=1)
+            if nxg.out_degree(node_id) > 1:
+                self._fix_virtual_edge(all_edges, node_id, DIV, "in", lb=1)
+
+        self._model.optimize()
+        if self._model.status != 2:
+            raise RuntimeError(
+                "Warm-start optimization failed — model may be infeasible."
+            )
+        self._store_solution(self._model, all_edges)
+
+        migration_edges = all_edges[
+            (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
+        ].copy()
+        return Tracked(
+            tracked_edges=migration_edges,
+            tracked_detections=detections,
+            frame_key=frame_key,
+            location_keys=list(location_keys),
+            value_key=value_key,
+            all_edges=all_edges,
+            all_vertices=all_vertices,
+        )
+
     def solve_from_existing_edges(
         self,
         all_vertices,

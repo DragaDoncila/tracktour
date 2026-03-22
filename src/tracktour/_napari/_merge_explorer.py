@@ -1,6 +1,16 @@
 import networkx as nx
+import numpy as np
 from magicgui.widgets import PushButton, create_widget
 from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+
+MERGE_CONTEXT_LAYER = "Merge Context"
+MERGE_EDGES_LAYER = "Merge Edges"
+
+# Okabe-Ito colourblind-friendly colours
+COLOUR_MERGE = "#D55E00"  # Vermillion
+COLOUR_PARENT_A = "#0072B2"  # Blue
+COLOUR_PARENT_B = "#E69F00"  # Orange
+COLOUR_CHILD = "#009E73"  # Bluish green
 
 
 class MergeExplorer(QWidget):
@@ -11,8 +21,12 @@ class MergeExplorer(QWidget):
         super().__init__()
         self._viewer = viewer
         self._nxg: "nx.DiGraph | None" = None
+        self._tracked = None
+        self._tracker = None
         self._merge_nodes: list = []
         self._merge_idx: int = 0
+        self._loc_keys: list = ["y", "x"]
+        self._frame_key: str = "t"
 
         self._tracks_layer_combo = create_widget(
             annotation="napari.layers.Tracks", label="Tracks Layer"
@@ -46,6 +60,8 @@ class MergeExplorer(QWidget):
         layer = self._tracks_layer_combo.value
         if layer is None:
             self._nxg = None
+            self._tracked = None
+            self._tracker = None
             self._merge_nodes = []
             self._merge_idx = 0
             self._status_label.setText("No layer selected")
@@ -59,6 +75,39 @@ class MergeExplorer(QWidget):
             self._status_label.setText("No graph in layer metadata")
             self._update_nav()
             return
+
+        self._tracked = layer.metadata.get("tracked")
+        self._tracker = layer.metadata.get("tracker")
+
+        if self._tracked is None:
+            self._status_label.setText("Reconstructing model from solution graph…")
+            try:
+                from tracktour._tracker import Tracker
+
+                # Infer keys from node attributes
+                sample_attrs = next(iter(self._nxg.nodes(data=True)))[1]
+                frame_key = "t"
+                location_keys = ("z", "y", "x") if "z" in sample_attrs else ("y", "x")
+                scale = tuple(float(s) for s in layer.scale[1:])
+
+                tracker = Tracker(im_shape=tuple(1 for _ in location_keys), scale=scale)
+                tracked = tracker.warm_start_from_solution_graph(
+                    self._nxg,
+                    frame_key=frame_key,
+                    location_keys=location_keys,
+                    scale=scale,
+                )
+                self._tracker = tracker
+                self._tracked = tracked
+                layer.metadata["tracker"] = tracker
+                layer.metadata["tracked"] = tracked
+            except Exception as e:
+                self._status_label.setText(f"Reconstruction failed: {e}")
+                self._update_nav()
+                return
+
+        self._loc_keys = list(self._tracked.location_keys)
+        self._frame_key = self._tracked.frame_key
 
         self._merge_nodes = sorted(
             [n for n in self._nxg.nodes if self._nxg.in_degree(n) > 1]
@@ -99,11 +148,98 @@ class MergeExplorer(QWidget):
         if not self._merge_nodes or self._nxg is None:
             return
         merge_id = self._merge_nodes[self._merge_idx]
-        node = self._nxg.nodes[merge_id]
-        t = int(node["t"])
-        loc_keys = ["z", "y", "x"] if "z" in node else ["y", "x"]
-        spatial = tuple(float(node[k]) for k in loc_keys)
+        merge_node = self._nxg.nodes[merge_id]
+        spatial = tuple(float(merge_node[k]) for k in self._loc_keys)
 
-        self._viewer.dims.current_step = (t,) + (0,) * len(loc_keys)
+        # Start at the earliest parent frame so the user can step forward to the merge
+        predecessors = list(self._nxg.predecessors(merge_id))
+        if predecessors:
+            t = int(min(self._nxg.nodes[p][self._frame_key] for p in predecessors))
+        else:
+            t = int(merge_node[self._frame_key])
+
+        self._viewer.dims.current_step = (t,) + (0,) * len(self._loc_keys)
         self._viewer.camera.center = spatial
         self._viewer.camera.zoom = 8
+
+        self._show_merge_context(merge_id)
+
+    def _node_pos(self, node_id: int) -> np.ndarray:
+        node = self._nxg.nodes[node_id]
+        return np.array(
+            [float(node[self._frame_key])] + [float(node[k]) for k in self._loc_keys]
+        )
+
+    def _show_merge_context(self, merge_id: int):
+        nxg = self._nxg
+        predecessors = sorted(nxg.predecessors(merge_id))
+        successors = list(nxg.successors(merge_id))
+
+        # Build points: merge node, then parents (A=first, B=rest), then children
+        point_ids = [merge_id] + predecessors + successors
+        symbols = (
+            ["star"]
+            + ["disc"] * min(1, len(predecessors))
+            + ["ring"] * max(0, len(predecessors) - 1)
+            + ["square"] * len(successors)
+        )
+        colors = (
+            [COLOUR_MERGE]
+            + [COLOUR_PARENT_A] * min(1, len(predecessors))
+            + [COLOUR_PARENT_B] * max(0, len(predecessors) - 1)
+            + [COLOUR_CHILD] * len(successors)
+        )
+        points_data = np.array([self._node_pos(n) for n in point_ids])
+
+        if MERGE_CONTEXT_LAYER in self._viewer.layers:
+            ctx = self._viewer.layers[MERGE_CONTEXT_LAYER]
+            ctx.data = points_data
+            ctx.symbol = symbols
+            ctx.face_color = colors
+        else:
+            tracks_layer = self._tracks_layer_combo.value
+            ctx = self._viewer.add_points(
+                points_data,
+                name=MERGE_CONTEXT_LAYER,
+                symbol=symbols,
+                face_color=colors,
+                opacity=0.7,
+                size=6,
+            )
+            if tracks_layer is not None:
+                ctx.scale = tracks_layer.scale
+
+        # Build vectors: shape (N, 2, D) — [start, direction]
+        vectors = []
+        edge_colors = []
+        m = self._node_pos(merge_id)
+        for i, parent in enumerate(predecessors):
+            p = self._node_pos(parent)
+            vectors.append([p, m - p])
+            edge_colors.append(COLOUR_PARENT_A if i == 0 else COLOUR_PARENT_B)
+        for child in successors:
+            c = self._node_pos(child)
+            vectors.append([m, c - m])
+            edge_colors.append(COLOUR_CHILD)
+
+        if not vectors:
+            return
+
+        vectors_data = np.array(vectors)
+
+        if MERGE_EDGES_LAYER in self._viewer.layers:
+            edges = self._viewer.layers[MERGE_EDGES_LAYER]
+            edges.data = vectors_data
+            edges.edge_color = edge_colors
+        else:
+            tracks_layer = self._tracks_layer_combo.value
+            edges = self._viewer.add_vectors(
+                vectors_data,
+                name=MERGE_EDGES_LAYER,
+                edge_color=edge_colors,
+                vector_style="arrow",
+                edge_width=0.3,
+                out_of_slice_display=True,
+            )
+            if tracks_layer is not None:
+                edges.scale = tracks_layer.scale
