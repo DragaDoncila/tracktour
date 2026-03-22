@@ -31,6 +31,7 @@ class MergeExplorer(QWidget):
         self._loc_keys: list = ["y", "x"]
         self._frame_key: str = "t"
         self._active_parent: int = 0  # 0 = Parent A, 1 = Parent B
+        self._next_edge_idx: int = 0  # counter for new edges added to live model
         self._oracle_corrections: dict = {}  # (parent_id, merge_id) -> 0
 
         self._tracks_layer_combo = create_widget(
@@ -59,12 +60,14 @@ class MergeExplorer(QWidget):
         parent_layout.addStretch()
 
         self._mark_exit_button = PushButton(text="Mark Active Parent as Exit")
+        self._re_solve_button = PushButton(text="Re-solve")
 
         self._tracks_layer_combo.changed.connect(self._on_tracks_layer_changed)
         self._prev_button.clicked.connect(self._go_prev)
         self._next_button.clicked.connect(self._go_next)
         self._parent_switch.toggled.connect(self._on_parent_switched)
         self._mark_exit_button.clicked.connect(self._mark_exit)
+        self._re_solve_button.clicked.connect(self._re_solve)
 
         base_layout = QVBoxLayout()
         base_layout.addWidget(self._tracks_layer_combo.native)
@@ -72,6 +75,7 @@ class MergeExplorer(QWidget):
         base_layout.addLayout(nav_layout)
         base_layout.addLayout(parent_layout)
         base_layout.addWidget(self._mark_exit_button.native)
+        base_layout.addWidget(self._re_solve_button.native)
         self.setLayout(base_layout)
 
         viewer.bind_key("p", self._toggle_parent)
@@ -137,16 +141,18 @@ class MergeExplorer(QWidget):
         self._active_parent = 0
         self._oracle_corrections = {}
         self._parent_switch.setChecked(False)
+        if self._tracked.all_edges is not None:
+            self._next_edge_idx = int(self._tracked.all_edges.index.max()) + 1
+        else:
+            self._next_edge_idx = 0
 
         self._merge_nodes = sorted(
             [n for n in self._nxg.nodes if self._nxg.in_degree(n) > 1]
         )
-        self._merge_idx = 0
+        self._merge_idx = -1
         n = len(self._merge_nodes)
         self._status_label.setText(f"Found {n} merge node{'s' if n != 1 else ''}")
         self._update_nav()
-        if n > 0:
-            self._navigate_to_current()
 
     def _update_nav(self):
         n = len(self._merge_nodes)
@@ -154,13 +160,17 @@ class MergeExplorer(QWidget):
             self._nav_label.setText("0/0")
             self._prev_button.enabled = False
             self._next_button.enabled = False
+        elif self._merge_idx == -1:
+            self._nav_label.setText(f"—/{n}")
+            self._prev_button.enabled = False
+            self._next_button.enabled = True
         else:
             self._nav_label.setText(f"{self._merge_idx + 1}/{n}")
             self._prev_button.enabled = self._merge_idx > 0
             self._next_button.enabled = self._merge_idx < n - 1
 
     def _go_prev(self):
-        if self._merge_idx == 0:
+        if self._merge_idx <= 0:
             return
         self._merge_idx -= 1
         self._update_nav()
@@ -169,7 +179,7 @@ class MergeExplorer(QWidget):
     def _go_next(self):
         if self._merge_idx >= len(self._merge_nodes) - 1:
             return
-        self._merge_idx += 1
+        self._merge_idx = max(0, self._merge_idx + 1)
         self._update_nav()
         self._navigate_to_current()
 
@@ -240,6 +250,10 @@ class MergeExplorer(QWidget):
         return base_color
 
     def _show_merge_context(self, merge_id: int):
+        for name in (MERGE_CONTEXT_LAYER, MERGE_EDGES_LAYER):
+            if name in self._viewer.layers:
+                self._viewer.layers[name].visible = True
+
         nxg = self._nxg
         predecessors = sorted(nxg.predecessors(merge_id))
         successors = list(nxg.successors(merge_id))
@@ -318,3 +332,109 @@ class MergeExplorer(QWidget):
             )
             if tracks_layer is not None:
                 edges.scale = tracks_layer.scale
+
+    def _ensure_edge_in_model(self, u: int, v: int) -> int:
+        """Return the all_edges index for (u, v), adding it to the live model if absent."""
+        import pandas as pd
+
+        from tracktour._tracker import Tracker, VirtualVertices
+
+        all_edges = self._tracked.all_edges
+        matches = all_edges[(all_edges.u == u) & (all_edges.v == v)]
+        if not matches.empty:
+            return matches.index[0]
+
+        APP = VirtualVertices.APP.value
+        TARGET = VirtualVertices.TARGET.value
+        DIV = VirtualVertices.DIV.value
+
+        if u == APP:
+            capacity = Tracker.APPEARANCE_EDGE_CAPACITY
+        elif v == TARGET:
+            capacity = Tracker.MERGE_EDGE_CAPACITY
+        elif u == DIV:
+            capacity = Tracker.DIVISION_EDGE_CAPACITY
+        else:
+            capacity = Tracker.MERGE_EDGE_CAPACITY
+
+        new_idx = self._next_edge_idx
+        self._next_edge_idx += 1
+
+        new_row = pd.DataFrame(
+            {
+                "u": [u],
+                "v": [v],
+                "capacity": [capacity],
+                "cost": [1.0],
+                "distance": [-1],
+                "flow": [1.0],
+            },
+            index=[new_idx],
+        )
+        self._tracked.all_edges = pd.concat([all_edges, new_row])
+
+        key = (new_idx, Tracker.index_to_label(u), Tracker.index_to_label(v))
+        var = self._tracker._model.addVar(
+            obj=1.0,
+            lb=1.0,
+            ub=float(capacity),
+            name=f"flow[{key[0]},{key[1]},{key[2]}]",
+        )
+        self._tracker._model.update()
+        self._tracker._model_flow_vars[key] = var
+
+        return new_idx
+
+    def _re_solve(self):
+        if not self._oracle_corrections:
+            self._status_label.setText("No corrections to apply.")
+            return
+        if self._tracker is None or self._tracked is None:
+            self._status_label.setText("No live model available.")
+            return
+
+        tracker = self._tracker
+        tracked = self._tracked
+
+        for (u, v), oracle_val in self._oracle_corrections.items():
+            edge_idx = self._ensure_edge_in_model(u, v)
+            tracker.fix_edge_in_model(edge_idx, u, v, lb=oracle_val, ub=oracle_val)
+
+        tracker._model.optimize()
+        if tracker._model.status != 2:
+            self._status_label.setText("Re-solve failed — model infeasible.")
+            return
+
+        tracker._store_solution(tracker._model, tracked.all_edges)
+
+        all_edges = tracked.all_edges
+        migration_edges = all_edges[
+            (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
+        ].copy()
+        tracked.tracked_edges = migration_edges
+        new_nxg = tracked.as_nx_digraph()
+
+        self._nxg = new_nxg
+        self._oracle_corrections = {}
+
+        layer = self._tracks_layer_combo.value
+        if layer is not None:
+            layer.metadata["nxg"] = new_nxg
+            from ._graph_conversion_util import get_tracks_from_nxg
+
+            new_tracks = get_tracks_from_nxg(new_nxg)
+            layer.data = new_tracks.data
+            layer.graph = new_tracks.graph
+
+        self._merge_nodes = sorted(
+            [n for n in new_nxg.nodes if new_nxg.in_degree(n) > 1]
+        )
+        n = len(self._merge_nodes)
+        self._merge_idx = -1
+        self._status_label.setText(
+            f"Re-solved. Found {n} merge node{'s' if n != 1 else ''}"
+        )
+        for name in (MERGE_CONTEXT_LAYER, MERGE_EDGES_LAYER):
+            if name in self._viewer.layers:
+                self._viewer.layers[name].visible = False
+        self._update_nav()
