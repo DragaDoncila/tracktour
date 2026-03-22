@@ -2,6 +2,7 @@ import networkx as nx
 import numpy as np
 from magicgui.widgets import PushButton, create_widget
 from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from superqt import QToggleSwitch
 
 MERGE_CONTEXT_LAYER = "Merge Context"
 MERGE_EDGES_LAYER = "Merge Edges"
@@ -11,6 +12,8 @@ COLOUR_MERGE = "#D55E00"  # Vermillion
 COLOUR_PARENT_A = "#0072B2"  # Blue
 COLOUR_PARENT_B = "#E69F00"  # Orange
 COLOUR_CHILD = "#009E73"  # Bluish green
+COLOUR_ACTIVE = "#FFFFFF"  # White — active parent
+COLOUR_MARKED = "#808080"  # Grey — marked for exit
 
 
 class MergeExplorer(QWidget):
@@ -27,6 +30,8 @@ class MergeExplorer(QWidget):
         self._merge_idx: int = 0
         self._loc_keys: list = ["y", "x"]
         self._frame_key: str = "t"
+        self._active_parent: int = 0  # 0 = Parent A, 1 = Parent B
+        self._oracle_corrections: dict = {}  # (parent_id, merge_id) -> 0
 
         self._tracks_layer_combo = create_widget(
             annotation="napari.layers.Tracks", label="Tracks Layer"
@@ -44,15 +49,32 @@ class MergeExplorer(QWidget):
         nav_layout.addWidget(self._nav_label)
         nav_layout.addWidget(self._next_button.native)
 
+        self._parent_switch = QToggleSwitch()
+        self._parent_switch.setChecked(False)  # off = Parent A, on = Parent B
+        parent_layout = QHBoxLayout()
+        parent_layout.addWidget(QLabel("Active parent:"))
+        parent_layout.addWidget(QLabel("A"))
+        parent_layout.addWidget(self._parent_switch)
+        parent_layout.addWidget(QLabel("B"))
+        parent_layout.addStretch()
+
+        self._mark_exit_button = PushButton(text="Mark Active Parent as Exit")
+
         self._tracks_layer_combo.changed.connect(self._on_tracks_layer_changed)
         self._prev_button.clicked.connect(self._go_prev)
         self._next_button.clicked.connect(self._go_next)
+        self._parent_switch.toggled.connect(self._on_parent_switched)
+        self._mark_exit_button.clicked.connect(self._mark_exit)
 
         base_layout = QVBoxLayout()
         base_layout.addWidget(self._tracks_layer_combo.native)
         base_layout.addWidget(self._status_label)
         base_layout.addLayout(nav_layout)
+        base_layout.addLayout(parent_layout)
+        base_layout.addWidget(self._mark_exit_button.native)
         self.setLayout(base_layout)
+
+        viewer.bind_key("p", self._toggle_parent)
 
         self._on_tracks_layer_changed()
 
@@ -64,6 +86,8 @@ class MergeExplorer(QWidget):
             self._tracker = None
             self._merge_nodes = []
             self._merge_idx = 0
+            self._active_parent = 0
+            self._oracle_corrections = {}
             self._status_label.setText("No layer selected")
             self._update_nav()
             return
@@ -72,6 +96,8 @@ class MergeExplorer(QWidget):
         if self._nxg is None:
             self._merge_nodes = []
             self._merge_idx = 0
+            self._active_parent = 0
+            self._oracle_corrections = {}
             self._status_label.setText("No graph in layer metadata")
             self._update_nav()
             return
@@ -108,6 +134,9 @@ class MergeExplorer(QWidget):
 
         self._loc_keys = list(self._tracked.location_keys)
         self._frame_key = self._tracked.frame_key
+        self._active_parent = 0
+        self._oracle_corrections = {}
+        self._parent_switch.setChecked(False)
 
         self._merge_nodes = sorted(
             [n for n in self._nxg.nodes if self._nxg.in_degree(n) > 1]
@@ -164,16 +193,58 @@ class MergeExplorer(QWidget):
 
         self._show_merge_context(merge_id)
 
+    def _toggle_parent(self, viewer=None):
+        self._parent_switch.setChecked(not self._parent_switch.isChecked())
+
+    def _on_parent_switched(self, checked: bool):
+        self._active_parent = 1 if checked else 0
+        if self._merge_nodes:
+            self._show_merge_context(self._merge_nodes[self._merge_idx])
+
+    def _mark_exit(self):
+        if not self._merge_nodes or self._nxg is None:
+            return
+        merge_id = self._merge_nodes[self._merge_idx]
+        predecessors = sorted(self._nxg.predecessors(merge_id))
+        if self._active_parent >= len(predecessors):
+            return
+        parent_id = predecessors[self._active_parent]
+        key = (parent_id, merge_id)
+        if key in self._oracle_corrections:
+            del self._oracle_corrections[key]
+            self._status_label.setText(
+                f"Unmarked exit: Parent {'A' if self._active_parent == 0 else 'B'} "
+                f"→ merge {merge_id}"
+            )
+        else:
+            self._oracle_corrections[key] = 0
+            self._status_label.setText(
+                f"Marked exit: Parent {'A' if self._active_parent == 0 else 'B'} "
+                f"→ merge {merge_id}"
+            )
+        self._show_merge_context(merge_id)
+
     def _node_pos(self, node_id: int) -> np.ndarray:
         node = self._nxg.nodes[node_id]
         return np.array(
             [float(node[self._frame_key])] + [float(node[k]) for k in self._loc_keys]
         )
 
+    def _parent_color(self, parent_id: int, merge_id: int, base_color: str) -> str:
+        """Return display color for a parent node given active/correction state."""
+        idx = sorted(self._nxg.predecessors(merge_id)).index(parent_id)
+        if (parent_id, merge_id) in self._oracle_corrections:
+            return COLOUR_MARKED
+        if idx == self._active_parent:
+            return COLOUR_ACTIVE
+        return base_color
+
     def _show_merge_context(self, merge_id: int):
         nxg = self._nxg
         predecessors = sorted(nxg.predecessors(merge_id))
         successors = list(nxg.successors(merge_id))
+
+        base_parent_colors = [COLOUR_PARENT_A, COLOUR_PARENT_B]
 
         # Build points: merge node, then parents (A=first, B=rest), then children
         point_ids = [merge_id] + predecessors + successors
@@ -185,8 +256,10 @@ class MergeExplorer(QWidget):
         )
         colors = (
             [COLOUR_MERGE]
-            + [COLOUR_PARENT_A] * min(1, len(predecessors))
-            + [COLOUR_PARENT_B] * max(0, len(predecessors) - 1)
+            + [
+                self._parent_color(p, merge_id, base_parent_colors[i])
+                for i, p in enumerate(predecessors)
+            ]
             + [COLOUR_CHILD] * len(successors)
         )
         points_data = np.array([self._node_pos(n) for n in point_ids])
@@ -216,7 +289,9 @@ class MergeExplorer(QWidget):
         for i, parent in enumerate(predecessors):
             p = self._node_pos(parent)
             vectors.append([p, m - p])
-            edge_colors.append(COLOUR_PARENT_A if i == 0 else COLOUR_PARENT_B)
+            edge_colors.append(
+                self._parent_color(parent, merge_id, base_parent_colors[i])
+            )
         for child in successors:
             c = self._node_pos(child)
             vectors.append([m, c - m])
