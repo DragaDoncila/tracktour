@@ -5,7 +5,6 @@ from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from superqt import QToggleSwitch
 
 TRACK_NODES_LAYER = "Track Nodes"
-MERGE_EDGES_LAYER = "Merge Edges"
 
 # Okabe-Ito colourblind-friendly colours as RGBA float tuples
 COLOUR_DEFAULT = (0.667, 0.667, 0.667, 1.0)  # Grey — default node
@@ -364,44 +363,6 @@ class MergeExplorer(QWidget):
 
         nodes_layer.visible = True
 
-        # Build edge vectors: shape (N, 2, D) — [start, direction]
-        vectors = []
-        edge_colors = []
-        m = self._node_pos(merge_id)
-        for i, parent in enumerate(predecessors):
-            p = self._node_pos(parent)
-            vectors.append([p, m - p])
-            edge_colors.append(
-                self._parent_color(parent, merge_id, base_parent_colors[i])
-            )
-        for child in successors:
-            c = self._node_pos(child)
-            vectors.append([m, c - m])
-            edge_colors.append(COLOUR_CHILD)
-
-        if not vectors:
-            return
-
-        vectors_data = np.array(vectors)
-
-        if MERGE_EDGES_LAYER in self._viewer.layers:
-            edges = self._viewer.layers[MERGE_EDGES_LAYER]
-            edges.data = vectors_data
-            edges.edge_color = edge_colors
-            edges.visible = True
-        else:
-            tracks_layer = self._tracks_layer_combo.value
-            edges = self._viewer.add_vectors(
-                vectors_data,
-                name=MERGE_EDGES_LAYER,
-                edge_color=edge_colors,
-                vector_style="arrow",
-                edge_width=0.3,
-                out_of_slice_display=True,
-            )
-            if tracks_layer is not None:
-                edges.scale = tracks_layer.scale
-
     def _re_solve(self):
         if self._tracker is None or self._tracked is None:
             self._status_label.setText("No live model available.")
@@ -519,8 +480,5 @@ class MergeExplorer(QWidget):
 
         # Rebuild TRACK_NODES_LAYER to reflect updated graph and reset tracking state
         self._build_nodes_layer()
-
-        if MERGE_EDGES_LAYER in self._viewer.layers:
-            self._viewer.layers[MERGE_EDGES_LAYER].visible = False
 
         self._update_nav()
