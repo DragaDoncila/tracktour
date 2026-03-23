@@ -90,37 +90,33 @@ class MergeExplorer(QWidget):
 
         self._on_tracks_layer_changed()
 
+    def _clear_state(self):
+        """Reset all mutable widget state, e.g. when the selected layer changes."""
+        self._nxg = None
+        self._tracked = None
+        self._tracker = None
+        self._merge_nodes = []
+        self._merge_idx = 0
+        self._active_parent = 0
+        self._oracle_corrections = {}
+        self._node_id_to_point_idx = {}
+        self._point_idx_to_node_id = {}
+        self._node_positions = {}
+        self._moved_point_indices = set()
+        self._export_geff_button.enabled = False
+
     def _on_tracks_layer_changed(self):
         layer = self._tracks_layer_combo.value
         if layer is None:
-            self._nxg = None
-            self._tracked = None
-            self._tracker = None
-            self._merge_nodes = []
-            self._merge_idx = 0
-            self._active_parent = 0
-            self._oracle_corrections = {}
-            self._node_id_to_point_idx = {}
-            self._point_idx_to_node_id = {}
-            self._node_positions = {}
-            self._moved_point_indices = set()
+            self._clear_state()
             self._status_label.setText("No layer selected")
-            self._export_geff_button.enabled = False
             self._update_nav()
             return
 
         self._nxg = layer.metadata.get("nxg")
         if self._nxg is None:
-            self._merge_nodes = []
-            self._merge_idx = 0
-            self._active_parent = 0
-            self._oracle_corrections = {}
-            self._node_id_to_point_idx = {}
-            self._point_idx_to_node_id = {}
-            self._node_positions = {}
-            self._moved_point_indices = set()
+            self._clear_state()
             self._status_label.setText("No graph in layer metadata")
-            self._export_geff_button.enabled = False
             self._update_nav()
             return
 
@@ -159,8 +155,8 @@ class MergeExplorer(QWidget):
                 layer.metadata["tracker"] = tracker
                 layer.metadata["tracked"] = tracked
             except Exception as e:
+                self._clear_state()
                 self._status_label.setText(f"Reconstruction failed: {e}")
-                self._export_geff_button.enabled = False
                 self._update_nav()
                 return
 
@@ -267,7 +263,7 @@ class MergeExplorer(QWidget):
         self._navigate_to_current()
 
     def _navigate_to_current(self):
-        if not self._merge_nodes or self._nxg is None:
+        if not self._merge_nodes or self._nxg is None or self._merge_idx < 0:
             return
         merge_id = self._merge_nodes[self._merge_idx]
         merge_node = self._nxg.nodes[merge_id]

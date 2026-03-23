@@ -58,9 +58,7 @@ packages = ["src"]
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
 napari = [
-    "arboretum",
     "napari<0.7.0",
-    "napari-graph",
     "matplotlib",
 ]
 test = ["pytest>=6.0", "napari[all,testing]"]
