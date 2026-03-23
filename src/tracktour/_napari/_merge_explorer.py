@@ -4,16 +4,17 @@ from magicgui.widgets import PushButton, create_widget
 from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from superqt import QToggleSwitch
 
-MERGE_CONTEXT_LAYER = "Merge Context"
+TRACK_NODES_LAYER = "Track Nodes"
 MERGE_EDGES_LAYER = "Merge Edges"
 
-# Okabe-Ito colourblind-friendly colours
-COLOUR_MERGE = "#D55E00"  # Vermillion
-COLOUR_PARENT_A = "#0072B2"  # Blue
-COLOUR_PARENT_B = "#E69F00"  # Orange
-COLOUR_CHILD = "#009E73"  # Bluish green
-COLOUR_ACTIVE = "#FFFFFF"  # White — active parent
-COLOUR_MARKED = "#808080"  # Grey — marked for exit
+# Okabe-Ito colourblind-friendly colours as RGBA float tuples
+COLOUR_DEFAULT = (0.667, 0.667, 0.667, 1.0)  # Grey — default node
+COLOUR_MERGE = (0.835, 0.369, 0.0, 1.0)  # Vermillion (#D55E00)
+COLOUR_PARENT_A = (0.0, 0.447, 0.698, 1.0)  # Blue (#0072B2)
+COLOUR_PARENT_B = (0.902, 0.624, 0.0, 1.0)  # Orange (#E69F00)
+COLOUR_CHILD = (0.0, 0.620, 0.451, 1.0)  # Bluish green (#009E73)
+COLOUR_ACTIVE = (1.0, 1.0, 1.0, 1.0)  # White — active parent
+COLOUR_MARKED = (0.502, 0.502, 0.502, 1.0)  # Grey — marked for exit
 
 
 class MergeExplorer(QWidget):
@@ -33,7 +34,10 @@ class MergeExplorer(QWidget):
         self._active_parent: int = 0  # 0 = Parent A, 1 = Parent B
         self._next_node_idx: int = 0  # counter for new node IDs
         self._oracle_corrections: dict = {}  # (parent_id, merge_id) -> 0
-        self._context_node_ids: list = []  # point index → node_id in context layer
+        self._node_id_to_point_idx: dict = {}  # node_id -> index in TRACK_NODES_LAYER
+        self._point_idx_to_node_id: dict = {}  # index in TRACK_NODES_LAYER -> node_id
+        self._node_positions: dict = {}  # node_id -> np.ndarray snapshot
+        self._moved_point_indices: set = set()  # point indices changed since last build
 
         self._tracks_layer_combo = create_widget(
             annotation="napari.layers.Tracks", label="Tracks Layer"
@@ -93,6 +97,10 @@ class MergeExplorer(QWidget):
             self._merge_idx = 0
             self._active_parent = 0
             self._oracle_corrections = {}
+            self._node_id_to_point_idx = {}
+            self._point_idx_to_node_id = {}
+            self._node_positions = {}
+            self._moved_point_indices = set()
             self._status_label.setText("No layer selected")
             self._update_nav()
             return
@@ -103,6 +111,10 @@ class MergeExplorer(QWidget):
             self._merge_idx = 0
             self._active_parent = 0
             self._oracle_corrections = {}
+            self._node_id_to_point_idx = {}
+            self._point_idx_to_node_id = {}
+            self._node_positions = {}
+            self._moved_point_indices = set()
             self._status_label.setText("No graph in layer metadata")
             self._update_nav()
             return
@@ -123,8 +135,8 @@ class MergeExplorer(QWidget):
 
                 # Infer im_shape from the spatial columns of the tracks layer
                 # data (columns 2+ are spatial after id and time).  Use
-                # floor(min) / ceil(max) rounded to integers so every node
-                # position sits strictly inside the image boundary.
+                # ceil(max) + 1 so every node position sits strictly inside
+                # the image boundary.
                 spatial_data = layer.data[:, 2:]
                 im_shape = tuple(
                     int(np.ceil(spatial_data[:, i].max())) + 1
@@ -150,17 +162,67 @@ class MergeExplorer(QWidget):
         self._frame_key = self._tracked.frame_key
         self._active_parent = 0
         self._oracle_corrections = {}
+        self._node_id_to_point_idx = {}
+        self._node_positions = {}
+        self._moved_point_indices = set()
         self._parent_switch.setChecked(False)
 
         self._merge_nodes = sorted(
             [n for n in self._nxg.nodes if self._nxg.in_degree(n) > 1]
         )
         self._merge_idx = -1
-        self._context_node_ids = []
         self._next_node_idx = self._nxg.number_of_nodes()
         n = len(self._merge_nodes)
         self._status_label.setText(f"Found {n} merge node{'s' if n != 1 else ''}")
         self._update_nav()
+        self._build_nodes_layer()
+
+    def _build_nodes_layer(self):
+        """Create or refresh TRACK_NODES_LAYER with all graph nodes as grey discs."""
+        if self._nxg is None:
+            return
+
+        node_ids = list(self._nxg.nodes)
+        positions = np.array([self._node_pos(n) for n in node_ids])
+
+        self._node_id_to_point_idx = {nid: i for i, nid in enumerate(node_ids)}
+        self._point_idx_to_node_id = {i: nid for i, nid in enumerate(node_ids)}
+        self._node_positions = {
+            nid: positions[i].copy() for i, nid in enumerate(node_ids)
+        }
+        self._moved_point_indices = set()
+
+        tracks_layer = self._tracks_layer_combo.value
+        n_nodes = len(node_ids)
+
+        if TRACK_NODES_LAYER in self._viewer.layers:
+            nodes_layer = self._viewer.layers[TRACK_NODES_LAYER]
+            # Disconnect old callback before replacing data
+            try:
+                nodes_layer.events.data.disconnect(self._on_nodes_data_changed)
+            except Exception:
+                pass
+            nodes_layer.data = positions
+            nodes_layer.symbol = ["disc"] * n_nodes
+            nodes_layer.face_color = [COLOUR_DEFAULT] * n_nodes
+        else:
+            nodes_layer = self._viewer.add_points(
+                positions,
+                name=TRACK_NODES_LAYER,
+                symbol=["disc"] * n_nodes,
+                face_color=[COLOUR_DEFAULT] * n_nodes,
+                opacity=0.7,
+                size=6,
+            )
+            if tracks_layer is not None:
+                nodes_layer.scale = tracks_layer.scale
+
+        nodes_layer.events.data.connect(self._on_nodes_data_changed)
+
+    def _on_nodes_data_changed(self, event):
+        if event.action == "changed":
+            for idx in event.data_indices:
+                self._moved_point_indices.add(int(idx))
 
     def _update_nav(self):
         n = len(self._merge_nodes)
@@ -258,54 +320,51 @@ class MergeExplorer(QWidget):
         return base_color
 
     def _show_merge_context(self, merge_id: int):
-        for name in (MERGE_CONTEXT_LAYER, MERGE_EDGES_LAYER):
-            if name in self._viewer.layers:
-                self._viewer.layers[name].visible = True
+        if TRACK_NODES_LAYER not in self._viewer.layers:
+            return
+
+        nodes_layer = self._viewer.layers[TRACK_NODES_LAYER]
+        n_points = len(nodes_layer.data)
+
+        # Reset all points to default style
+        nodes_layer.symbol = ["disc"] * n_points
+        nodes_layer.face_color = [COLOUR_DEFAULT] * n_points
 
         nxg = self._nxg
         predecessors = sorted(nxg.predecessors(merge_id))
         successors = list(nxg.successors(merge_id))
-
         base_parent_colors = [COLOUR_PARENT_A, COLOUR_PARENT_B]
 
-        # Build points: merge node, then parents (A=first, B=rest), then children
-        point_ids = [merge_id] + predecessors + successors
-        self._context_node_ids = list(point_ids)
-        symbols = (
-            ["star"]
-            + ["disc"] * min(1, len(predecessors))
-            + ["ring"] * max(0, len(predecessors) - 1)
-            + ["square"] * len(successors)
-        )
-        colors = (
-            [COLOUR_MERGE]
-            + [
-                self._parent_color(p, merge_id, base_parent_colors[i])
-                for i, p in enumerate(predecessors)
-            ]
-            + [COLOUR_CHILD] * len(successors)
-        )
-        points_data = np.array([self._node_pos(n) for n in point_ids])
+        # Style merge node
+        if merge_id in self._node_id_to_point_idx:
+            idx = self._node_id_to_point_idx[merge_id]
+            nodes_layer.symbol[idx] = "star"
+            nodes_layer.face_color[idx] = COLOUR_MERGE
 
-        if MERGE_CONTEXT_LAYER in self._viewer.layers:
-            ctx = self._viewer.layers[MERGE_CONTEXT_LAYER]
-            ctx.data = points_data
-            ctx.symbol = symbols
-            ctx.face_color = colors
-        else:
-            tracks_layer = self._tracks_layer_combo.value
-            ctx = self._viewer.add_points(
-                points_data,
-                name=MERGE_CONTEXT_LAYER,
-                symbol=symbols,
-                face_color=colors,
-                opacity=0.7,
-                size=6,
-            )
-            if tracks_layer is not None:
-                ctx.scale = tracks_layer.scale
+        # Style parents
+        for i, parent_id in enumerate(predecessors):
+            if parent_id not in self._node_id_to_point_idx:
+                continue
+            idx = self._node_id_to_point_idx[parent_id]
+            symbol = "disc" if i == 0 else "ring"
+            color = self._parent_color(parent_id, merge_id, base_parent_colors[i])
+            nodes_layer.symbol[idx] = symbol
+            nodes_layer.face_color[idx] = color
 
-        # Build vectors: shape (N, 2, D) — [start, direction]
+        # Style children
+        for child_id in successors:
+            if child_id not in self._node_id_to_point_idx:
+                continue
+            idx = self._node_id_to_point_idx[child_id]
+            nodes_layer.symbol[idx] = "square"
+            nodes_layer.face_color[idx] = COLOUR_CHILD
+
+        # Trigger layer refresh
+        nodes_layer.refresh()
+
+        nodes_layer.visible = True
+
+        # Build edge vectors: shape (N, 2, D) — [start, direction]
         vectors = []
         edge_colors = []
         m = self._node_pos(merge_id)
@@ -329,6 +388,7 @@ class MergeExplorer(QWidget):
             edges = self._viewer.layers[MERGE_EDGES_LAYER]
             edges.data = vectors_data
             edges.edge_color = edge_colors
+            edges.visible = True
         else:
             tracks_layer = self._tracks_layer_combo.value
             edges = self._viewer.add_vectors(
@@ -351,29 +411,34 @@ class MergeExplorer(QWidget):
         tracked = self._tracked
 
         model_changed = False
+        # Track positions we've confirmed moving so we can patch new_nxg after
+        # as_nx_digraph() (which reads from tracked_detections — but pandas
+        # copy-on-write in 2.x means in-place .at[] mutations made before
+        # pd.concat in add_node_to_model may not survive into the concat result).
+        moved_node_positions: dict = {}  # node_id -> (frame, spatial)
 
-        # Handle moved and new detections from the context Points layer
-        if MERGE_CONTEXT_LAYER in self._viewer.layers:
-            ctx = self._viewer.layers[MERGE_CONTEXT_LAYER]
-            # Moved existing points
-            for i, node_id in enumerate(self._context_node_ids):
-                if i >= len(ctx.data):
-                    break
-                current_pos = tuple(ctx.data[i])
-                stored_pos = tuple(self._node_pos(node_id))
+        if TRACK_NODES_LAYER in self._viewer.layers:
+            nodes_layer = self._viewer.layers[TRACK_NODES_LAYER]
+
+            # Moved nodes: only check indices flagged by the data event callback
+            for point_idx in self._moved_point_indices:
+                node_id = self._point_idx_to_node_id.get(point_idx)
+                if node_id is None:
+                    continue
+                current_pos = nodes_layer.data[point_idx]
+                stored_pos = self._node_positions[node_id]
                 if not np.allclose(current_pos, stored_pos):
                     model_changed = True
                     frame = int(current_pos[0])
                     spatial = tuple(float(v) for v in current_pos[1:])
                     tracker.move_node_in_model(tracked, node_id, frame, spatial)
-                    # Keep the solution graph in sync
-                    self._nxg.nodes[node_id][self._frame_key] = frame
-                    for k, val in zip(self._loc_keys, spatial):
-                        self._nxg.nodes[node_id][k] = val
-            # New points appended beyond the recorded context
-            for i in range(len(self._context_node_ids), len(ctx.data)):
+                    moved_node_positions[node_id] = (frame, spatial)
+
+            # New nodes: rows appended beyond the tracked mapping
+            n_known = len(self._node_id_to_point_idx)
+            for i in range(n_known, len(nodes_layer.data)):
                 model_changed = True
-                raw_pos = ctx.data[i]
+                raw_pos = nodes_layer.data[i]
                 frame = int(raw_pos[0])
                 spatial = tuple(float(v) for v in raw_pos[1:])
                 node_id = self._next_node_idx
@@ -383,7 +448,9 @@ class MergeExplorer(QWidget):
                     node_id,
                     **{self._frame_key: frame, **dict(zip(self._loc_keys, spatial))},
                 )
-                self._context_node_ids.append(node_id)
+                self._node_id_to_point_idx[node_id] = i
+                self._point_idx_to_node_id[i] = node_id
+                self._node_positions[node_id] = raw_pos.copy()
 
         for (u, v), oracle_val in self._oracle_corrections.items():
             model_changed = True
@@ -410,6 +477,16 @@ class MergeExplorer(QWidget):
         tracked.tracked_edges = migration_edges
         new_nxg = tracked.as_nx_digraph()
 
+        # Patch moved nodes with ground-truth positions from the Points layer.
+        # as_nx_digraph() reads tracked_detections, which may not reflect the
+        # in-place mutations made by move_node_in_model when add_node_to_model
+        # subsequently replaces tracked_detections via pd.concat.
+        for node_id, (frame, spatial) in moved_node_positions.items():
+            if node_id in new_nxg.nodes:
+                new_nxg.nodes[node_id][self._frame_key] = frame
+                for k, val in zip(self._loc_keys, spatial):
+                    new_nxg.nodes[node_id][k] = val
+
         self._nxg = new_nxg
         self._oracle_corrections = {}
 
@@ -430,7 +507,11 @@ class MergeExplorer(QWidget):
         self._status_label.setText(
             f"Re-solved. Found {n} merge node{'s' if n != 1 else ''}"
         )
-        for name in (MERGE_CONTEXT_LAYER, MERGE_EDGES_LAYER):
-            if name in self._viewer.layers:
-                self._viewer.layers[name].visible = False
+
+        # Rebuild TRACK_NODES_LAYER to reflect updated graph and reset tracking state
+        self._build_nodes_layer()
+
+        if MERGE_EDGES_LAYER in self._viewer.layers:
+            self._viewer.layers[MERGE_EDGES_LAYER].visible = False
+
         self._update_nav()
