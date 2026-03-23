@@ -28,7 +28,7 @@ class TrackingSolver(Container):
             annotation="napari.layers.Labels", label="Segmentation Layer"
         )
         self._n_neighbours_spin = create_widget(
-            annotation="int", label="n Neighbours", options={"min": 2}
+            value=10, annotation="int", label="n Neighbours", options={"min": 2}
         )
         self._n_children_spin = create_widget(
             annotation="int", label="max Children", options={"min": 2}
