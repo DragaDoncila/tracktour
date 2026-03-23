@@ -454,6 +454,9 @@ class MergeExplorer(QWidget):
         ]
         if affected_frames:
             tracker.rebuild_kd_trees(tracked, affected_frames)
+            # Reset bounds on ALL migration edges touching the affected frames so
+            # that nearby nodes (not just the moved/added ones) can be reassigned.
+            tracker._reset_frame_edges(tracked, affected_frames)
 
         # Phase 2: recompute edges and constraints with all nodes at final positions.
         for node_id, (frame, spatial) in moved_nodes.items():

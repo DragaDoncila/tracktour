@@ -1585,19 +1585,50 @@ class Tracker:
         for nbr_id in neighbor_ids:
             self.update_node_constraints(nbr_id)
 
+    def _reset_frame_edges(self, tracked: "Tracked", frames: list) -> None:
+        """Reset migration-edge bounds for every node in *frames*.
+
+        For each affected frame, all migration edges (real→real) where either
+        endpoint lives in that frame have their LB reset to 0 and UB restored to
+        ``MERGE_EDGE_CAPACITY``.  This lets the solver freely reassign nearby
+        nodes that were previously locked into a particular solution, not just
+        the nodes that were explicitly moved or added.
+
+        Call after all ``_prepare_*`` calls (so positions are final) and after
+        ``rebuild_kd_trees``, but before ``_apply_node_edges``.
+        """
+        frame_set = set(frames)
+        frame_nodes = set(
+            tracked.tracked_detections[
+                tracked.tracked_detections[self.frame_key].isin(frame_set)
+            ].index.tolist()
+        )
+        node_labels = {Tracker.index_to_label(n) for n in frame_nodes}
+
+        for key, var in self._model_flow_vars.items():
+            u_lbl, v_lbl = key[1], key[2]
+            # Only migration edges (both endpoints are real node labels, not strings)
+            if isinstance(u_lbl, str) or isinstance(v_lbl, str):
+                continue
+            if u_lbl in node_labels or v_lbl in node_labels:
+                var.LB = 0.0
+                var.UB = float(Tracker.MERGE_EDGE_CAPACITY)
+
     def move_node_in_model(
         self, tracked: "Tracked", node_id: int, new_frame: int, new_pos: tuple
     ) -> None:
         """Update an existing node's position in the live Gurobi model.
 
         Single-node convenience wrapper around ``_prepare_move_node``,
-        ``rebuild_kd_trees``, and ``_apply_node_edges``.  When moving multiple
-        nodes, call ``_prepare_move_node`` for each, then ``rebuild_kd_trees``
-        once for the union of affected frames, then ``_apply_node_edges`` for
-        each — so that every k-NN search sees all nodes at their final positions.
+        ``rebuild_kd_trees``, ``_reset_frame_edges``, and ``_apply_node_edges``.
+        When moving multiple nodes, call ``_prepare_move_node`` for each, then
+        ``rebuild_kd_trees`` once for the union of affected frames, then
+        ``_reset_frame_edges`` once, then ``_apply_node_edges`` for each — so
+        that every k-NN search sees all nodes at their final positions.
         """
         self._prepare_move_node(tracked, node_id, new_frame, new_pos)
         self.rebuild_kd_trees(tracked, [new_frame])
+        self._reset_frame_edges(tracked, [new_frame])
         self._apply_node_edges(tracked, node_id, new_frame, new_pos)
 
     def add_node_to_model(
@@ -1606,11 +1637,13 @@ class Tracker:
         """Add a new detection to tracked state and the live Gurobi model.
 
         Single-node convenience wrapper around ``_prepare_add_node``,
-        ``rebuild_kd_trees``, and ``_apply_node_edges``.  When adding multiple
-        nodes, call ``_prepare_add_node`` for each, then ``rebuild_kd_trees``
-        once for the union of affected frames, then ``_apply_node_edges`` for
-        each — so that every k-NN search sees all nodes at their final positions.
+        ``rebuild_kd_trees``, ``_reset_frame_edges``, and ``_apply_node_edges``.
+        When adding multiple nodes, call ``_prepare_add_node`` for each, then
+        ``rebuild_kd_trees`` once for the union of affected frames, then
+        ``_reset_frame_edges`` once, then ``_apply_node_edges`` for each — so
+        that every k-NN search sees all nodes at their final positions.
         """
         self._prepare_add_node(tracked, node_id, frame, pos)
         self.rebuild_kd_trees(tracked, [frame])
+        self._reset_frame_edges(tracked, [frame])
         self._apply_node_edges(tracked, node_id, frame, pos)
