@@ -31,8 +31,9 @@ class MergeExplorer(QWidget):
         self._loc_keys: list = ["y", "x"]
         self._frame_key: str = "t"
         self._active_parent: int = 0  # 0 = Parent A, 1 = Parent B
-        self._next_edge_idx: int = 0  # counter for new edges added to live model
+        self._next_node_idx: int = 0  # counter for new node IDs
         self._oracle_corrections: dict = {}  # (parent_id, merge_id) -> 0
+        self._context_node_ids: list = []  # point index → node_id in context layer
 
         self._tracks_layer_combo = create_widget(
             annotation="napari.layers.Tracks", label="Tracks Layer"
@@ -120,7 +121,16 @@ class MergeExplorer(QWidget):
                 location_keys = ("z", "y", "x") if "z" in sample_attrs else ("y", "x")
                 scale = tuple(float(s) for s in layer.scale[1:])
 
-                tracker = Tracker(im_shape=tuple(1 for _ in location_keys), scale=scale)
+                # Infer im_shape from the spatial columns of the tracks layer
+                # data (columns 2+ are spatial after id and time).  Use
+                # floor(min) / ceil(max) rounded to integers so every node
+                # position sits strictly inside the image boundary.
+                spatial_data = layer.data[:, 2:]
+                im_shape = tuple(
+                    int(np.ceil(spatial_data[:, i].max())) + 1
+                    for i in range(len(location_keys))
+                )
+                tracker = Tracker(im_shape=im_shape, scale=scale)
                 tracked = tracker.warm_start_from_solution_graph(
                     self._nxg,
                     frame_key=frame_key,
@@ -141,15 +151,13 @@ class MergeExplorer(QWidget):
         self._active_parent = 0
         self._oracle_corrections = {}
         self._parent_switch.setChecked(False)
-        if self._tracked.all_edges is not None:
-            self._next_edge_idx = int(self._tracked.all_edges.index.max()) + 1
-        else:
-            self._next_edge_idx = 0
 
         self._merge_nodes = sorted(
             [n for n in self._nxg.nodes if self._nxg.in_degree(n) > 1]
         )
         self._merge_idx = -1
+        self._context_node_ids = []
+        self._next_node_idx = self._nxg.number_of_nodes()
         n = len(self._merge_nodes)
         self._status_label.setText(f"Found {n} merge node{'s' if n != 1 else ''}")
         self._update_nav()
@@ -262,6 +270,7 @@ class MergeExplorer(QWidget):
 
         # Build points: merge node, then parents (A=first, B=rest), then children
         point_ids = [merge_id] + predecessors + successors
+        self._context_node_ids = list(point_ids)
         symbols = (
             ["star"]
             + ["disc"] * min(1, len(predecessors))
@@ -333,62 +342,7 @@ class MergeExplorer(QWidget):
             if tracks_layer is not None:
                 edges.scale = tracks_layer.scale
 
-    def _ensure_edge_in_model(self, u: int, v: int) -> int:
-        """Return the all_edges index for (u, v), adding it to the live model if absent."""
-        import pandas as pd
-
-        from tracktour._tracker import Tracker, VirtualVertices
-
-        all_edges = self._tracked.all_edges
-        matches = all_edges[(all_edges.u == u) & (all_edges.v == v)]
-        if not matches.empty:
-            return matches.index[0]
-
-        APP = VirtualVertices.APP.value
-        TARGET = VirtualVertices.TARGET.value
-        DIV = VirtualVertices.DIV.value
-
-        if u == APP:
-            capacity = Tracker.APPEARANCE_EDGE_CAPACITY
-        elif v == TARGET:
-            capacity = Tracker.MERGE_EDGE_CAPACITY
-        elif u == DIV:
-            capacity = Tracker.DIVISION_EDGE_CAPACITY
-        else:
-            capacity = Tracker.MERGE_EDGE_CAPACITY
-
-        new_idx = self._next_edge_idx
-        self._next_edge_idx += 1
-
-        new_row = pd.DataFrame(
-            {
-                "u": [u],
-                "v": [v],
-                "capacity": [capacity],
-                "cost": [1.0],
-                "distance": [-1],
-                "flow": [1.0],
-            },
-            index=[new_idx],
-        )
-        self._tracked.all_edges = pd.concat([all_edges, new_row])
-
-        key = (new_idx, Tracker.index_to_label(u), Tracker.index_to_label(v))
-        var = self._tracker._model.addVar(
-            obj=1.0,
-            lb=1.0,
-            ub=float(capacity),
-            name=f"flow[{key[0]},{key[1]},{key[2]}]",
-        )
-        self._tracker._model.update()
-        self._tracker._model_flow_vars[key] = var
-
-        return new_idx
-
     def _re_solve(self):
-        if not self._oracle_corrections:
-            self._status_label.setText("No corrections to apply.")
-            return
         if self._tracker is None or self._tracked is None:
             self._status_label.setText("No live model available.")
             return
@@ -396,9 +350,51 @@ class MergeExplorer(QWidget):
         tracker = self._tracker
         tracked = self._tracked
 
+        model_changed = False
+
+        # Handle moved and new detections from the context Points layer
+        if MERGE_CONTEXT_LAYER in self._viewer.layers:
+            ctx = self._viewer.layers[MERGE_CONTEXT_LAYER]
+            # Moved existing points
+            for i, node_id in enumerate(self._context_node_ids):
+                if i >= len(ctx.data):
+                    break
+                current_pos = tuple(ctx.data[i])
+                stored_pos = tuple(self._node_pos(node_id))
+                if not np.allclose(current_pos, stored_pos):
+                    model_changed = True
+                    frame = int(current_pos[0])
+                    spatial = tuple(float(v) for v in current_pos[1:])
+                    tracker.move_node_in_model(tracked, node_id, frame, spatial)
+                    # Keep the solution graph in sync
+                    self._nxg.nodes[node_id][self._frame_key] = frame
+                    for k, val in zip(self._loc_keys, spatial):
+                        self._nxg.nodes[node_id][k] = val
+            # New points appended beyond the recorded context
+            for i in range(len(self._context_node_ids), len(ctx.data)):
+                model_changed = True
+                raw_pos = ctx.data[i]
+                frame = int(raw_pos[0])
+                spatial = tuple(float(v) for v in raw_pos[1:])
+                node_id = self._next_node_idx
+                self._next_node_idx += 1
+                tracker.add_node_to_model(tracked, node_id, frame, spatial)
+                self._nxg.add_node(
+                    node_id,
+                    **{self._frame_key: frame, **dict(zip(self._loc_keys, spatial))},
+                )
+                self._context_node_ids.append(node_id)
+
         for (u, v), oracle_val in self._oracle_corrections.items():
-            edge_idx = self._ensure_edge_in_model(u, v)
+            model_changed = True
+            tracked.all_edges, edge_idx = tracker.ensure_candidate_edge(
+                tracked.all_edges, u, v
+            )
             tracker.fix_edge_in_model(edge_idx, u, v, lb=oracle_val, ub=oracle_val)
+
+        if not model_changed:
+            self._status_label.setText("No corrections to apply.")
+            return
 
         tracker._model.optimize()
         if tracker._model.status != 2:

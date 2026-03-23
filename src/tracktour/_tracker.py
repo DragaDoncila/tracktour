@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from ._costs import (
     closest_neighbour_child_cost,
+    closest_neighbour_child_cost_single,
     dist_to_edge_cost_func,
     dist_to_edge_cost_single,
 )
@@ -750,9 +751,14 @@ class Tracker:
         return tracked
 
     def _build_trees(
-        self, detections: pd.DataFrame, frame_key: str, location_keys: Tuple[str]
+        self,
+        detections: pd.DataFrame,
+        frame_key: str,
+        location_keys: Tuple[str],
+        frames=None,
+        scale=None,
     ) -> Dict[int, KDTree]:
-        """Build dictionary of KDTrees for each frame in detections
+        """Build dictionary of KDTrees for each frame in detections.
 
         Parameters
         ----------
@@ -762,19 +768,32 @@ class Tracker:
             column in `detections` denoting the frame number or time index
         location_keys : Tuple[str, str, str]
             tuple of columns in `detections` denoting spatial coordinates
+        frames : iterable, optional
+            if provided, only build trees for these frames; otherwise build
+            trees for all frames present in detections
+        scale : array-like, optional
+            if provided, multiply position values by scale before building each
+            tree so that distances are in physical rather than pixel units
 
         Returns
         -------
         dict[int, KDTree]
             dictionary of KDTree objects for each frame in detections
         """
+        if frames is None:
+            sorted_ts = sorted(detections[frame_key].unique())
+        else:
+            sorted_ts = sorted(frames)
         kd_dict = {}
-        sorted_ts = sorted(detections[frame_key].unique())
         for t in sorted_ts:
             frame_detections = detections[detections[frame_key] == t][
                 list(location_keys)
             ]
-            kd_dict[t] = KDTree(frame_detections)
+            if not frame_detections.empty:
+                values = frame_detections.values
+                if scale is not None:
+                    values = values * np.asarray(scale)
+                kd_dict[t] = KDTree(values)
 
         return kd_dict
 
@@ -1230,6 +1249,393 @@ class Tracker:
             var.LB = lb
         if ub is not None:
             var.UB = ub
+
+    def ensure_candidate_edge(
+        self, all_edges: pd.DataFrame, u: int, v: int, cost: float = 1.0
+    ) -> tuple:
+        """Return (updated all_edges, edge_idx), adding (u, v) as a candidate if absent.
+
+        New edges have lb=0, ub=capacity, flow=0.  Call ``fix_edge_in_model``
+        afterwards to constrain specific edges.
+        """
+        matches = all_edges[(all_edges.u == u) & (all_edges.v == v)]
+        if not matches.empty:
+            return all_edges, int(matches.index[0])
+
+        APP = VirtualVertices.APP.value
+        DIV = VirtualVertices.DIV.value
+
+        if u == APP:
+            capacity = Tracker.APPEARANCE_EDGE_CAPACITY
+        elif u == DIV:
+            capacity = Tracker.DIVISION_EDGE_CAPACITY
+        else:
+            capacity = Tracker.MERGE_EDGE_CAPACITY
+
+        new_idx = int(all_edges.index.max()) + 1 if not all_edges.empty else 0
+        new_row = pd.DataFrame(
+            {
+                "u": [u],
+                "v": [v],
+                "capacity": [capacity],
+                "cost": [cost],
+                "distance": [-1],
+                "flow": [0.0],
+            },
+            index=[new_idx],
+        )
+        all_edges = pd.concat([all_edges, new_row])
+
+        key = (new_idx, Tracker.index_to_label(u), Tracker.index_to_label(v))
+        var = self._model.addVar(
+            obj=cost,
+            lb=0.0,
+            ub=float(capacity),
+            name=f"flow[{key[0]},{key[1]},{key[2]}]",
+        )
+        self._model.update()
+        self._model_flow_vars[key] = var
+
+        return all_edges, new_idx
+
+    def find_knn_edges_for_node(
+        self,
+        tracked_detections: pd.DataFrame,
+        node_id: int,
+        frame: int,
+        pos: tuple,
+        k: int = 10,
+    ) -> list:
+        """Return (u, v, dist) candidate edges to k nearest neighbours in adjacent frames.
+
+        Uses and lazily populates ``_kd_dict`` keyed by frame, with ``self.scale``
+        applied to coordinates before querying.
+        """
+        if self._kd_dict is None:
+            self._kd_dict = {}
+        scale = (
+            np.array(self.scale)
+            if self.scale is not None
+            else np.ones(len(self.location_keys))
+        )
+        scaled_pos = np.array(pos) * scale
+        # Use pre-scaled columns if they exist (regular solve path), otherwise
+        # build with explicit scale applied to unscaled location_keys values.
+        lazy_loc_keys = (
+            getattr(self, "_scaled_location_keys", None) or self.location_keys
+        )
+        lazy_scale = None if getattr(self, "_scaled_location_keys", None) else scale
+        edges = []
+        for delta in (-1, 1):
+            neighbour_frame = frame + delta
+            if neighbour_frame not in self._kd_dict:
+                self._kd_dict.update(
+                    self._build_trees(
+                        tracked_detections,
+                        self.frame_key,
+                        lazy_loc_keys,
+                        frames=[neighbour_frame],
+                        scale=lazy_scale,
+                    )
+                )
+            if neighbour_frame not in self._kd_dict:
+                continue
+            tree = self._kd_dict[neighbour_frame]
+            frame_dets = tracked_detections[
+                tracked_detections[self.frame_key] == neighbour_frame
+            ]
+            k_actual = min(k, tree.n)
+            dists, idxs = tree.query(scaled_pos, k=k_actual if k_actual > 1 else [1])
+            dists = np.atleast_1d(dists)
+            idxs = np.atleast_1d(idxs)
+            for dist, idx in zip(dists, idxs):
+                neighbour_id = int(frame_dets.iloc[idx].name)
+                if delta == -1:
+                    edges.append((neighbour_id, node_id, float(dist)))
+                else:
+                    edges.append((node_id, neighbour_id, float(dist)))
+        return edges
+
+    def update_node_constraints(self, node_id: int):
+        """Remove and re-add flow conservation constraints for an existing node.
+
+        Must be called after new edges involving ``node_id`` are added via
+        ``ensure_candidate_edge`` so that the Gurobi solver can route flow
+        through those new edges.
+        """
+        lbl = Tracker.index_to_label(node_id)
+        for prefix in ("conserv", "demand", "div"):
+            constr = self._model.getConstrByName(f"{prefix}_{lbl}")
+            if constr is not None:
+                self._model.remove(constr)
+        self._model.update()
+
+        flow_vars = self._model_flow_vars
+        div_lbl = Tracker.index_to_label(VirtualVertices.DIV.value)
+        in_vars = [var for key, var in flow_vars.items() if key[2] == lbl]
+        out_vars = [var for key, var in flow_vars.items() if key[1] == lbl]
+        div_vars = [
+            var for key, var in flow_vars.items() if key[2] == lbl and key[1] == div_lbl
+        ]
+        self._add_constraints_for_vertex(lbl, self._model, in_vars, out_vars, div_vars)
+        self._model.update()
+
+    def _set_virtual_edge_costs(self, node_id: int, enter_cost: float) -> None:
+        """Set APP→node and node→TARGET Gurobi var.Obj to *enter_cost*.
+
+        ``ensure_candidate_edge`` sets obj only when the var is newly created.
+        Call this explicitly to update pre-existing virtual edges (e.g. after
+        moving a node) using an enter_cost already computed by the caller.
+        """
+        app_lbl = Tracker.index_to_label(VirtualVertices.APP.value)
+        target_lbl = Tracker.index_to_label(VirtualVertices.TARGET.value)
+        node_lbl = Tracker.index_to_label(node_id)
+        for key, var in self._model_flow_vars.items():
+            if (key[1] == app_lbl and key[2] == node_lbl) or (
+                key[1] == node_lbl and key[2] == target_lbl
+            ):
+                var.Obj = enter_cost
+        self._model.update()
+
+    def move_node_in_model(
+        self, tracked: "Tracked", node_id: int, new_frame: int, new_pos: tuple
+    ) -> None:
+        """Update an existing node's position in the live Gurobi model.
+
+        Treats the move as remove-then-re-add:
+
+        1. Old migration edges are disabled (``ub=0``) — they were built from
+           the old position and should not constrain the re-solve.
+        2. Virtual edges (APP/DIV/TARGET) have ``lb`` reset to 0 and ``ub``
+           restored to their original capacity.
+        3. The node's coordinates are updated in ``tracked_detections``.
+        4. The KD-tree for ``new_frame`` is rebuilt (equivalent to pop/push
+           since ``scipy.KDTree`` is immutable).
+        5. New k-NN migration edges are found; existing edges that coincide
+           with a new candidate are re-enabled with the updated distance cost.
+        6. Flow conservation constraints are rebuilt for the node and its new
+           neighbours.
+        7. Virtual edge objective coefficients are updated to the proper
+           enter/exit cost at the new location.
+        """
+        APP = VirtualVertices.APP.value
+        TARGET = VirtualVertices.TARGET.value
+        DIV = VirtualVertices.DIV.value
+        app_lbl = Tracker.index_to_label(APP)
+        target_lbl = Tracker.index_to_label(TARGET)
+        div_lbl = Tracker.index_to_label(DIV)
+        node_lbl = Tracker.index_to_label(node_id)
+
+        # 1. Reset all edges involving this node.
+        #    Real-to-real migration edges are disabled (ub=0); virtual edge
+        #    bounds are restored to their original capacities.
+        for key, var in self._model_flow_vars.items():
+            u_lbl, v_lbl = key[1], key[2]
+            if u_lbl != node_lbl and v_lbl != node_lbl:
+                continue
+            var.LB = 0.0
+            if not isinstance(u_lbl, str) and not isinstance(v_lbl, str):
+                var.UB = 0.0  # disable old migration edge
+            elif u_lbl == app_lbl and v_lbl == node_lbl:
+                var.UB = float(Tracker.APPEARANCE_EDGE_CAPACITY)
+            elif u_lbl == node_lbl and v_lbl == target_lbl:
+                var.UB = float(Tracker.MERGE_EDGE_CAPACITY)
+            elif u_lbl == div_lbl and v_lbl == node_lbl:
+                var.UB = float(Tracker.DIVISION_EDGE_CAPACITY)
+
+        # 2. Update position in tracked_detections (and all_vertices if present)
+        if (
+            tracked.tracked_detections is not None
+            and node_id in tracked.tracked_detections.index
+        ):
+            tracked.tracked_detections.at[node_id, self.frame_key] = new_frame
+            for k, val in zip(self.location_keys, new_pos):
+                tracked.tracked_detections.at[node_id, k] = val
+        if tracked.all_vertices is not None and node_id in tracked.all_vertices.index:
+            tracked.all_vertices.at[node_id, self.frame_key] = new_frame
+            for k, val in zip(self.location_keys, new_pos):
+                tracked.all_vertices.at[node_id, k] = val
+
+        # 3. Rebuild KD-tree for new_frame so future k-NN queries see the
+        #    node at its new position (scipy.KDTree is immutable, so rebuild
+        #    is the equivalent of pop-old + push-new).
+        if self._kd_dict is None:
+            self._kd_dict = {}
+        lazy_loc_keys = (
+            getattr(self, "_scaled_location_keys", None) or self.location_keys
+        )
+        lazy_scale = (
+            None
+            if getattr(self, "_scaled_location_keys", None)
+            else np.array(self.scale)
+        )
+        self._kd_dict.update(
+            self._build_trees(
+                tracked.tracked_detections,
+                self.frame_key,
+                lazy_loc_keys,
+                frames=[new_frame],
+                scale=lazy_scale,
+            )
+        )
+
+        # 4. Find k-NN migration candidates from the new position
+        knn_edges = self.find_knn_edges_for_node(
+            tracked.tracked_detections, node_id, new_frame, new_pos
+        )
+
+        # 5. Enable or add each new k-NN edge with the updated distance cost.
+        #    If the edge already exists in all_edges (was previously disabled),
+        #    re-enable it with the new cost rather than creating a duplicate.
+        neighbor_ids = set()
+        for u, v, dist in knn_edges:
+            matches = tracked.all_edges[
+                (tracked.all_edges.u == u) & (tracked.all_edges.v == v)
+            ]
+            if not matches.empty:
+                edge_idx = int(matches.index[0])
+                ekey = (edge_idx, Tracker.index_to_label(u), Tracker.index_to_label(v))
+                if ekey in self._model_flow_vars:
+                    evar = self._model_flow_vars[ekey]
+                    evar.LB = 0.0
+                    evar.UB = float(Tracker.MERGE_EDGE_CAPACITY)
+                    evar.Obj = dist
+                tracked.all_edges.at[edge_idx, "cost"] = dist
+            else:
+                tracked.all_edges, _ = self.ensure_candidate_edge(
+                    tracked.all_edges, u, v, cost=dist
+                )
+            if u >= 0 and u != node_id:
+                neighbor_ids.add(u)
+            if v >= 0 and v != node_id:
+                neighbor_ids.add(v)
+        self._model.update()
+
+        # 6. Rebuild conservation constraints for the node and its new neighbours
+        self.update_node_constraints(node_id)
+        for nbr_id in neighbor_ids:
+            self.update_node_constraints(nbr_id)
+
+        # 7. Update virtual edge costs to reflect boundary distance at new position
+        scale = np.array(self.scale)
+        src_scaled = np.array(new_pos) * scale
+        enter_cost = max(
+            float(dist_to_edge_cost_single(self._im_shape, src_scaled)), 1.0
+        )
+        self._set_virtual_edge_costs(node_id, enter_cost)
+
+    def add_node_to_model(
+        self, tracked: "Tracked", node_id: int, frame: int, pos: tuple
+    ):
+        """Add a new detection to tracked state and the live Gurobi model.
+
+        k-NN migration edges are computed first (before the node appears in
+        tracked_detections) so that div_cost can be derived from candidate
+        children.  Appearance, exit, and division edges are then added with
+        properly computed costs.
+        """
+        APP = VirtualVertices.APP.value
+        TARGET = VirtualVertices.TARGET.value
+        DIV = VirtualVertices.DIV.value
+
+        # 1. k-NN migration candidates (search current detections, before adding new node)
+        knn_edges = self.find_knn_edges_for_node(
+            tracked.tracked_detections, node_id, frame, pos
+        )
+
+        # 2. Compute costs
+        scale = np.array(self.scale)
+        src_scaled = np.array(pos) * scale
+        enter_cost = float(dist_to_edge_cost_single(self._im_shape, src_scaled))
+
+        knn_out = [(u, v, dist) for (u, v, dist) in knn_edges if u == node_id]
+        child_scaled = [
+            tracked.tracked_detections.loc[v][self.location_keys].values * scale
+            for _, v, _ in knn_out
+        ]
+        div_cost = closest_neighbour_child_cost_single(src_scaled, child_scaled)
+        # Cap inf so Gurobi objective stays finite; effectively blocks division
+        if not math.isfinite(div_cost):
+            div_cost = 1e9
+
+        # 3. Append to tracked_detections with proper costs
+        new_det = pd.DataFrame(
+            [
+                {
+                    self.frame_key: frame,
+                    **dict(zip(self.location_keys, pos)),
+                    "enter_cost": enter_cost,
+                    "exit_cost": enter_cost,
+                    "div_cost": div_cost,
+                }
+            ],
+            index=[node_id],
+        )
+        tracked.tracked_detections = pd.concat([tracked.tracked_detections, new_det])
+        if tracked.all_vertices is not None:
+            all_cols = {col: -1 for col in tracked.all_vertices.columns}
+            all_cols.update(
+                {
+                    self.frame_key: frame,
+                    **dict(zip(self.location_keys, pos)),
+                    "enter_cost": enter_cost,
+                    "exit_cost": enter_cost,
+                    "div_cost": div_cost,
+                }
+            )
+            tracked.all_vertices = pd.concat(
+                [tracked.all_vertices, pd.DataFrame([all_cols], index=[node_id])]
+            )
+
+        # 4. Rebuild kd_dict entry for this frame to include the new node
+        if self._kd_dict is None:
+            self._kd_dict = {}
+        lazy_loc_keys = (
+            getattr(self, "_scaled_location_keys", None) or self.location_keys
+        )
+        lazy_scale = None if getattr(self, "_scaled_location_keys", None) else scale
+        self._kd_dict.update(
+            self._build_trees(
+                tracked.tracked_detections,
+                self.frame_key,
+                lazy_loc_keys,
+                frames=[frame],
+                scale=lazy_scale,
+            )
+        )
+
+        # 5. Virtual candidate edges (lb=0) with computed costs
+        tracked.all_edges, _ = self.ensure_candidate_edge(
+            tracked.all_edges, APP, node_id, cost=enter_cost
+        )
+        tracked.all_edges, _ = self.ensure_candidate_edge(
+            tracked.all_edges, node_id, TARGET, cost=enter_cost
+        )
+        tracked.all_edges, _ = self.ensure_candidate_edge(
+            tracked.all_edges, DIV, node_id, cost=div_cost
+        )
+        # Explicitly set Obj on the virtual vars (ensure_candidate_edge only sets
+        # obj when the var is newly created; call this to handle pre-existing edges).
+        self._set_virtual_edge_costs(node_id, enter_cost)
+
+        # 6. Migration candidate edges; collect real neighbors for constraint update
+        neighbor_ids = set()
+        for u, v, dist in knn_edges:
+            tracked.all_edges, _ = self.ensure_candidate_edge(
+                tracked.all_edges, u, v, cost=dist
+            )
+            if u >= 0 and u != node_id:
+                neighbor_ids.add(u)
+            if v >= 0 and v != node_id:
+                neighbor_ids.add(v)
+
+        # 7. Flow conservation constraints for the new node and its neighbors.
+        # Neighbor nodes get updated because the new edges to/from them are not
+        # part of their original constraints and would otherwise be ignored by
+        # the solver.
+        self.update_node_constraints(node_id)
+        for nbr_id in neighbor_ids:
+            self.update_node_constraints(nbr_id)
 
     def add_vertex_to_model(
         self,
