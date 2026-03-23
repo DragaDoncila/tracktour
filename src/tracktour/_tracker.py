@@ -588,17 +588,21 @@ class Tracker:
 
         # Build detections DataFrame from real nodes (node_id >= 0)
         real_nodes = {nid: attrs for nid, attrs in nxg.nodes(data=True) if nid >= 0}
-        det_records = [
-            {
-                "Index": nid,
-                frame_key: attrs[frame_key],
-                **{k: attrs[k] for k in location_keys},
-                "enter_cost": 1.0,
-                "exit_cost": 1.0,
-                "div_cost": 1.0,
-            }
-            for nid, attrs in real_nodes.items()
-        ]
+        _scale = np.array(scale) if scale is not None else np.ones(len(location_keys))
+        det_records = []
+        for nid, attrs in real_nodes.items():
+            pos = np.array([attrs[k] for k in location_keys]) * _scale
+            border_cost = max(float(dist_to_edge_cost_single(self._im_shape, pos)), 1.0)
+            det_records.append(
+                {
+                    "Index": nid,
+                    frame_key: attrs[frame_key],
+                    **{k: attrs[k] for k in location_keys},
+                    "enter_cost": border_cost,
+                    "exit_cost": border_cost,
+                    "div_cost": 1.0,
+                }
+            )
         detections = pd.DataFrame(det_records).set_index("Index").sort_values(frame_key)
 
         # Build edge_df from solution migration edges only
@@ -1586,16 +1590,20 @@ class Tracker:
             self.update_node_constraints(nbr_id)
 
     def _reset_frame_edges(self, tracked: "Tracked", frames: list) -> None:
-        """Reset edge bounds for every node in *frames*.
+        """Reset edge bounds for nodes in *frames* and their immediate neighbours.
 
-        For each affected frame, resets LB=0 and restores UB on:
-        - Migration edges (real→real) where either endpoint is in the frame
-        - APP→node, node→TARGET, and DIV→node virtual edges for frame nodes
+        For each affected frame f, resets LB=0 and restores UB on:
+        - Migration edges where either endpoint is in f
+        - All virtual edges (APP/DIV/TARGET) for nodes in f
 
-        This lets the solver freely reassign all nodes in the affected frames —
-        not just those explicitly moved/added — including whether a node is an
-        appearance, exit, or division.  Oracle corrections are re-applied by the
-        caller after this reset, so user-fixed edges are not permanently lost.
+        Additionally resets virtual edges for nodes in adjacent frames f-1 and
+        f+1, because those nodes may have been locked as exits or appearances by
+        the warm-start but should be free to connect to new/moved nodes in f.
+        For example, adding a node to frame 11 should allow a frame 10 exit
+        (node→TARGET, LB=1) to instead migrate into frame 11.
+
+        Oracle corrections are re-applied by the caller after this reset, so
+        user-fixed edges are not permanently lost.
 
         Call after all ``_prepare_*`` calls (so positions are final) and after
         ``rebuild_kd_trees``, but before ``_apply_node_edges``.
@@ -1605,32 +1613,46 @@ class Tracker:
         src_lbl = Tracker.index_to_label(VirtualVertices.SOURCE.value)
 
         frame_set = set(frames)
-        # node_labels contains raw integer labels for real nodes in affected frames
-        frame_nodes = set(
-            tracked.tracked_detections[
-                tracked.tracked_detections[self.frame_key].isin(frame_set)
-            ].index.tolist()
+        adjacent_frame_set = {f + d for f in frame_set for d in (-1, 1)} - frame_set
+
+        det = tracked.tracked_detections
+        frame_nodes = set(det[det[self.frame_key].isin(frame_set)].index.tolist())
+        adjacent_nodes = set(
+            det[det[self.frame_key].isin(adjacent_frame_set)].index.tolist()
         )
         node_labels = {Tracker.index_to_label(n) for n in frame_nodes}
+        adjacent_labels = {Tracker.index_to_label(n) for n in adjacent_nodes}
 
         for key, var in self._model_flow_vars.items():
             u_lbl, v_lbl = key[1], key[2]
-            # Never touch SOURCE edges
             if u_lbl == src_lbl or v_lbl == src_lbl:
                 continue
             u_in_frame = u_lbl in node_labels
             v_in_frame = v_lbl in node_labels
-            if not u_in_frame and not v_in_frame:
-                continue
-            # Reset LB; restore UB based on edge type
-            var.LB = 0.0
-            if u_lbl == app_lbl:
-                var.UB = float(Tracker.APPEARANCE_EDGE_CAPACITY)
-            elif u_lbl == div_lbl:
-                var.UB = float(Tracker.DIVISION_EDGE_CAPACITY)
-            else:
-                # migration (real→real) or node→TARGET
-                var.UB = float(Tracker.MERGE_EDGE_CAPACITY)
+
+            if u_in_frame or v_in_frame:
+                # Affected-frame node: reset migration and all virtual edges
+                var.LB = 0.0
+                if u_lbl == app_lbl:
+                    var.UB = float(Tracker.APPEARANCE_EDGE_CAPACITY)
+                elif u_lbl == div_lbl:
+                    var.UB = float(Tracker.DIVISION_EDGE_CAPACITY)
+                else:
+                    var.UB = float(Tracker.MERGE_EDGE_CAPACITY)
+            elif u_lbl in adjacent_labels or v_lbl in adjacent_labels:
+                # Adjacent-frame node: only reset its virtual edges, not migrations
+                if u_lbl == app_lbl and v_lbl in adjacent_labels:
+                    var.LB = 0.0
+                    var.UB = float(Tracker.APPEARANCE_EDGE_CAPACITY)
+                elif u_lbl == div_lbl and v_lbl in adjacent_labels:
+                    var.LB = 0.0
+                    var.UB = float(Tracker.DIVISION_EDGE_CAPACITY)
+                elif (
+                    v_lbl == Tracker.index_to_label(VirtualVertices.TARGET.value)
+                    and u_lbl in adjacent_labels
+                ):
+                    var.LB = 0.0
+                    var.UB = float(Tracker.MERGE_EDGE_CAPACITY)
 
     def move_node_in_model(
         self, tracked: "Tracked", node_id: int, new_frame: int, new_pos: tuple
