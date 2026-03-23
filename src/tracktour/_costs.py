@@ -77,6 +77,32 @@ def closest_neighbour_child_cost(detections, location_keys, edge_df):
     return min_dists
 
 
+def closest_neighbour_child_cost_single(
+    src_scaled: np.ndarray, child_scaled: list
+) -> float:
+    """Division cost for a single node given scaled src position and candidate child positions.
+
+    Reproduces the per-node logic of ``closest_neighbour_child_cost``:
+    for each pair of children, cost = inter_child_dist + min(dist_src_to_child_i, dist_src_to_child_j).
+    Returns the minimum over all pairs, or ``math.inf`` when fewer than 2 children.
+    """
+    from scipy.spatial.distance import pdist
+
+    if len(child_scaled) <= 1:
+        return math.inf
+
+    child_coord_array = np.asarray(child_scaled)
+    dists_to_child = np.linalg.norm(src_scaled - child_coord_array, axis=1)
+    inter_child_dists = pdist(child_coord_array)
+    div_costs = inter_child_dists + np.array(
+        [
+            dists_to_child[list(condensed_to_square(i, len(child_coord_array)))].min()
+            for i in range(len(inter_child_dists))
+        ]
+    )
+    return float(div_costs.min())
+
+
 # TODO: Do we want to support negative coords
 def dist_to_edge_cost_func(im_shape, detections, location_keys):
     # distance from 0 is just the coordinate itself
