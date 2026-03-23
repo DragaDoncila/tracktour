@@ -411,16 +411,15 @@ class MergeExplorer(QWidget):
         tracked = self._tracked
 
         model_changed = False
-        # Track positions we've confirmed moving so we can patch new_nxg after
-        # as_nx_digraph() (which reads from tracked_detections — but pandas
-        # copy-on-write in 2.x means in-place .at[] mutations made before
-        # pd.concat in add_node_to_model may not survive into the concat result).
-        moved_node_positions: dict = {}  # node_id -> (frame, spatial)
+        # Collect all position changes before touching edges so that the single
+        # KD-tree rebuild and the subsequent k-NN searches see every node at its
+        # final position.
+        moved_nodes: dict = {}  # node_id -> (frame, spatial)
+        new_nodes: list = []  # [(point_idx, node_id, frame, spatial)]
 
         if TRACK_NODES_LAYER in self._viewer.layers:
             nodes_layer = self._viewer.layers[TRACK_NODES_LAYER]
 
-            # Moved nodes: only check indices flagged by the data event callback
             for point_idx in self._moved_point_indices:
                 node_id = self._point_idx_to_node_id.get(point_idx)
                 if node_id is None:
@@ -431,10 +430,8 @@ class MergeExplorer(QWidget):
                     model_changed = True
                     frame = int(current_pos[0])
                     spatial = tuple(float(v) for v in current_pos[1:])
-                    tracker.move_node_in_model(tracked, node_id, frame, spatial)
-                    moved_node_positions[node_id] = (frame, spatial)
+                    moved_nodes[node_id] = (frame, spatial)
 
-            # New nodes: rows appended beyond the tracked mapping
             n_known = len(self._node_id_to_point_idx)
             for i in range(n_known, len(nodes_layer.data)):
                 model_changed = True
@@ -443,14 +440,33 @@ class MergeExplorer(QWidget):
                 spatial = tuple(float(v) for v in raw_pos[1:])
                 node_id = self._next_node_idx
                 self._next_node_idx += 1
-                tracker.add_node_to_model(tracked, node_id, frame, spatial)
-                self._nxg.add_node(
-                    node_id,
-                    **{self._frame_key: frame, **dict(zip(self._loc_keys, spatial))},
-                )
-                self._node_id_to_point_idx[node_id] = i
-                self._point_idx_to_node_id[i] = node_id
-                self._node_positions[node_id] = raw_pos.copy()
+                new_nodes.append((i, node_id, frame, spatial))
+
+        # Phase 1: update all positions in tracked_detections and reset edges.
+        for node_id, (frame, spatial) in moved_nodes.items():
+            tracker._prepare_move_node(tracked, node_id, frame, spatial)
+        for _, node_id, frame, spatial in new_nodes:
+            tracker._prepare_add_node(tracked, node_id, frame, spatial)
+
+        # Single KD-tree rebuild for all affected frames.
+        affected_frames = [frame for frame, _ in moved_nodes.values()] + [
+            frame for _, _, frame, _ in new_nodes
+        ]
+        if affected_frames:
+            tracker.rebuild_kd_trees(tracked, affected_frames)
+
+        # Phase 2: recompute edges and constraints with all nodes at final positions.
+        for node_id, (frame, spatial) in moved_nodes.items():
+            tracker._apply_node_edges(tracked, node_id, frame, spatial)
+        for i, node_id, frame, spatial in new_nodes:
+            tracker._apply_node_edges(tracked, node_id, frame, spatial)
+            self._nxg.add_node(
+                node_id,
+                **{self._frame_key: frame, **dict(zip(self._loc_keys, spatial))},
+            )
+            self._node_id_to_point_idx[node_id] = i
+            self._point_idx_to_node_id[i] = node_id
+            self._node_positions[node_id] = nodes_layer.data[i].copy()
 
         for (u, v), oracle_val in self._oracle_corrections.items():
             model_changed = True
@@ -476,16 +492,6 @@ class MergeExplorer(QWidget):
         ].copy()
         tracked.tracked_edges = migration_edges
         new_nxg = tracked.as_nx_digraph()
-
-        # Patch moved nodes with ground-truth positions from the Points layer.
-        # as_nx_digraph() reads tracked_detections, which may not reflect the
-        # in-place mutations made by move_node_in_model when add_node_to_model
-        # subsequently replaces tracked_detections via pd.concat.
-        for node_id, (frame, spatial) in moved_node_positions.items():
-            if node_id in new_nxg.nodes:
-                new_nxg.nodes[node_id][self._frame_key] = frame
-                for k, val in zip(self._loc_keys, spatial):
-                    new_nxg.nodes[node_id][k] = val
 
         self._nxg = new_nxg
         self._oracle_corrections = {}
