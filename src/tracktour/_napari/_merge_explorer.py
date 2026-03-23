@@ -202,6 +202,10 @@ class MergeExplorer(QWidget):
         tracks_layer = self._tracks_layer_combo.value
         n_nodes = len(node_ids)
 
+        import pandas as pd
+
+        features = pd.DataFrame({"node_id": node_ids})
+
         if TRACK_NODES_LAYER in self._viewer.layers:
             nodes_layer = self._viewer.layers[TRACK_NODES_LAYER]
             # Disconnect old callback before replacing data
@@ -210,12 +214,14 @@ class MergeExplorer(QWidget):
             except Exception:
                 pass
             nodes_layer.data = positions
+            nodes_layer.features = features
             nodes_layer.symbol = ["disc"] * n_nodes
             nodes_layer.face_color = [COLOUR_DEFAULT] * n_nodes
         else:
             nodes_layer = self._viewer.add_points(
                 positions,
                 name=TRACK_NODES_LAYER,
+                features=features,
                 symbol=["disc"] * n_nodes,
                 face_color=[COLOUR_DEFAULT] * n_nodes,
                 opacity=0.7,

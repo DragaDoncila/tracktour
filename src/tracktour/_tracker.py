@@ -1586,18 +1586,26 @@ class Tracker:
             self.update_node_constraints(nbr_id)
 
     def _reset_frame_edges(self, tracked: "Tracked", frames: list) -> None:
-        """Reset migration-edge bounds for every node in *frames*.
+        """Reset edge bounds for every node in *frames*.
 
-        For each affected frame, all migration edges (real→real) where either
-        endpoint lives in that frame have their LB reset to 0 and UB restored to
-        ``MERGE_EDGE_CAPACITY``.  This lets the solver freely reassign nearby
-        nodes that were previously locked into a particular solution, not just
-        the nodes that were explicitly moved or added.
+        For each affected frame, resets LB=0 and restores UB on:
+        - Migration edges (real→real) where either endpoint is in the frame
+        - APP→node, node→TARGET, and DIV→node virtual edges for frame nodes
+
+        This lets the solver freely reassign all nodes in the affected frames —
+        not just those explicitly moved/added — including whether a node is an
+        appearance, exit, or division.  Oracle corrections are re-applied by the
+        caller after this reset, so user-fixed edges are not permanently lost.
 
         Call after all ``_prepare_*`` calls (so positions are final) and after
         ``rebuild_kd_trees``, but before ``_apply_node_edges``.
         """
+        app_lbl = Tracker.index_to_label(VirtualVertices.APP.value)
+        div_lbl = Tracker.index_to_label(VirtualVertices.DIV.value)
+        src_lbl = Tracker.index_to_label(VirtualVertices.SOURCE.value)
+
         frame_set = set(frames)
+        # node_labels contains raw integer labels for real nodes in affected frames
         frame_nodes = set(
             tracked.tracked_detections[
                 tracked.tracked_detections[self.frame_key].isin(frame_set)
@@ -1607,11 +1615,21 @@ class Tracker:
 
         for key, var in self._model_flow_vars.items():
             u_lbl, v_lbl = key[1], key[2]
-            # Only migration edges (both endpoints are real node labels, not strings)
-            if isinstance(u_lbl, str) or isinstance(v_lbl, str):
+            # Never touch SOURCE edges
+            if u_lbl == src_lbl or v_lbl == src_lbl:
                 continue
-            if u_lbl in node_labels or v_lbl in node_labels:
-                var.LB = 0.0
+            u_in_frame = u_lbl in node_labels
+            v_in_frame = v_lbl in node_labels
+            if not u_in_frame and not v_in_frame:
+                continue
+            # Reset LB; restore UB based on edge type
+            var.LB = 0.0
+            if u_lbl == app_lbl:
+                var.UB = float(Tracker.APPEARANCE_EDGE_CAPACITY)
+            elif u_lbl == div_lbl:
+                var.UB = float(Tracker.DIVISION_EDGE_CAPACITY)
+            else:
+                # migration (real→real) or node→TARGET
                 var.UB = float(Tracker.MERGE_EDGE_CAPACITY)
 
     def move_node_in_model(
