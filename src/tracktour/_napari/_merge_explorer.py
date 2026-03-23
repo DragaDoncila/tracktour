@@ -65,6 +65,8 @@ class MergeExplorer(QWidget):
 
         self._mark_exit_button = PushButton(text="Mark Active Parent as Exit")
         self._re_solve_button = PushButton(text="Re-solve")
+        self._export_geff_button = PushButton(text="Export Solution to GEFF")
+        self._export_geff_button.enabled = False
 
         self._tracks_layer_combo.changed.connect(self._on_tracks_layer_changed)
         self._prev_button.clicked.connect(self._go_prev)
@@ -72,6 +74,7 @@ class MergeExplorer(QWidget):
         self._parent_switch.toggled.connect(self._on_parent_switched)
         self._mark_exit_button.clicked.connect(self._mark_exit)
         self._re_solve_button.clicked.connect(self._re_solve)
+        self._export_geff_button.clicked.connect(self._export_solution_geff)
 
         base_layout = QVBoxLayout()
         base_layout.addWidget(self._tracks_layer_combo.native)
@@ -80,6 +83,7 @@ class MergeExplorer(QWidget):
         base_layout.addLayout(parent_layout)
         base_layout.addWidget(self._mark_exit_button.native)
         base_layout.addWidget(self._re_solve_button.native)
+        base_layout.addWidget(self._export_geff_button.native)
         self.setLayout(base_layout)
 
         viewer.bind_key("p", self._toggle_parent)
@@ -101,6 +105,7 @@ class MergeExplorer(QWidget):
             self._node_positions = {}
             self._moved_point_indices = set()
             self._status_label.setText("No layer selected")
+            self._export_geff_button.enabled = False
             self._update_nav()
             return
 
@@ -115,6 +120,7 @@ class MergeExplorer(QWidget):
             self._node_positions = {}
             self._moved_point_indices = set()
             self._status_label.setText("No graph in layer metadata")
+            self._export_geff_button.enabled = False
             self._update_nav()
             return
 
@@ -154,6 +160,7 @@ class MergeExplorer(QWidget):
                 layer.metadata["tracked"] = tracked
             except Exception as e:
                 self._status_label.setText(f"Reconstruction failed: {e}")
+                self._export_geff_button.enabled = False
                 self._update_nav()
                 return
 
@@ -173,6 +180,7 @@ class MergeExplorer(QWidget):
         self._next_node_idx = self._nxg.number_of_nodes()
         n = len(self._merge_nodes)
         self._status_label.setText(f"Found {n} merge node{'s' if n != 1 else ''}")
+        self._export_geff_button.enabled = True
         self._update_nav()
         self._build_nodes_layer()
 
@@ -482,3 +490,17 @@ class MergeExplorer(QWidget):
         self._build_nodes_layer()
 
         self._update_nav()
+
+    def _export_solution_geff(self):
+        """Save the current solution to a GEFF file via a file dialog."""
+        if self._tracked is None:
+            return
+        from qtpy.QtWidgets import QFileDialog
+
+        from tracktour._geff_io import write_solution_geff
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Solution to GEFF", "", "GEFF files (*.geff)"
+        )
+        if path:
+            write_solution_geff(self._tracked, path, overwrite=True)
