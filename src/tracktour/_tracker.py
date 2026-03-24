@@ -1497,21 +1497,17 @@ class Tracker:
         """
         if self._kd_dict is None:
             self._kd_dict = {}
-        lazy_loc_keys = (
-            getattr(self, "_scaled_location_keys", None) or self.location_keys
-        )
-        lazy_scale = (
-            None
-            if getattr(self, "_scaled_location_keys", None)
-            else np.array(self.scale)
-        )
+        # Always rebuild from unscaled location_keys + explicit scale.
+        # Using pre-computed _scaled_location_keys is unsafe here because
+        # _prepare_add_node only writes unscaled columns (scaled ones become
+        # NaN after concat) and _prepare_move_node leaves scaled columns stale.
         self._kd_dict.update(
             self._build_trees(
                 tracked.tracked_detections,
                 self.frame_key,
-                lazy_loc_keys,
+                self.location_keys,
                 frames=frames,
-                scale=lazy_scale,
+                scale=np.array(self.scale),
             )
         )
 
@@ -1542,7 +1538,7 @@ class Tracker:
 
         knn_out = [(u, v, dist) for (u, v, dist) in knn_edges if u == node_id]
         child_scaled = [
-            tracked.tracked_detections.loc[v][self.location_keys].values * scale
+            tracked.tracked_detections.loc[v][list(self.location_keys)].values * scale
             for _, v, _ in knn_out
         ]
         div_cost = closest_neighbour_child_cost_single(src_scaled, child_scaled)
