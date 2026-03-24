@@ -86,8 +86,6 @@ class MergeExplorer(QWidget):
         base_layout.addWidget(self._export_geff_button.native)
         self.setLayout(base_layout)
 
-        viewer.bind_key("p", self._toggle_parent)
-
         self._on_tracks_layer_changed()
 
     def _clear_state(self):
