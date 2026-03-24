@@ -108,7 +108,7 @@ def get_coloured_solution_layers(tracked, scale, segmentation):
     value_key = tracked.value_key
     layer_scale = (1,) + tuple(scale)
 
-    subgraph = tracked.as_nx_digraph()
+    subgraph = tracked.as_nx_digraph(include_all_attrs=True)
     tracks_layer = get_tracks_from_nxg(subgraph)
     tracks_layer.scale = layer_scale
     tracks_layer.metadata = {"nxg": subgraph}

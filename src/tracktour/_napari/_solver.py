@@ -171,7 +171,7 @@ class TrackingSolver(Container):
         )
         tracked.assign_features()
 
-        subgraph = tracked.as_nx_digraph()
+        subgraph = tracked.as_nx_digraph(include_all_attrs=True)
         tracks_layer = get_tracks_from_nxg(subgraph)
         tracks_layer.scale = (1,) + tuple(tracker.scale)
         tracks_layer.metadata = {

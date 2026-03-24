@@ -463,7 +463,7 @@ class MergeExplorer(QWidget):
             (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
         ].copy()
         tracked.tracked_edges = migration_edges
-        new_nxg = tracked.as_nx_digraph()
+        new_nxg = tracked.as_nx_digraph(include_all_attrs=True)
 
         self._nxg = new_nxg
         self._oracle_corrections = {}
