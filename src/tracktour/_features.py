@@ -12,7 +12,6 @@ discarded.
 import re
 
 import numpy as np
-from scipy.special import softmax as scipy_softmax
 
 _FLOW_VAR_RE = re.compile(r"flow[\[(](\d+)")
 
@@ -137,23 +136,38 @@ def assign_probability_features(all_edges):
     all_edges["parental_softmax"] = -1.0
 
     # include appearance (u == -2) and migration edges (u >= 0), exclude exit edges
-    incoming = all_edges[
+    incoming = all_edges.loc[
         (all_edges.v >= 0) & ((all_edges.u == -2) | (all_edges.u >= 0))
     ]
-    for _, v_edges in incoming.groupby("v"):
-        softmax_dist = scipy_softmax(-v_edges.cost)
-        all_edges.loc[v_edges.index, "softmax"] = softmax_dist
-        entropy = -np.sum(softmax_dist * np.log(softmax_dist))
-        all_edges.loc[v_edges.index, "softmax_entropy"] = entropy
+    if incoming.empty:
+        return ["softmax", "softmax_entropy", "parental_softmax"]
 
-        v_edges_no_app = v_edges[v_edges.u >= 0]
-        v_edges_app = v_edges[v_edges.u == -2]
-        exp_sum = np.sum(np.exp(-v_edges_no_app.cost))
-        parental_softmax = np.exp(-v_edges_no_app.cost) / (1 + exp_sum)
-        all_edges.loc[v_edges_no_app.index, "parental_softmax"] = parental_softmax
-        all_edges.loc[v_edges_app.index, "parental_softmax"] = 1 - np.sum(
-            parental_softmax
-        )
+    # Numerically stable softmax: shift exponents by per-group min cost (= max of -cost)
+    group_min_cost = incoming.groupby("v")["cost"].transform("min")
+    shifted_exp = np.exp(-(incoming["cost"] - group_min_cost))
+    group_exp_sum = shifted_exp.groupby(incoming["v"]).transform("sum")
+    softmax_vals = shifted_exp / group_exp_sum
+
+    # Entropy: -sum(softmax * log(softmax)) per group, broadcast to each edge
+    sm_log_sm = softmax_vals * np.log(softmax_vals)
+    entropy_per_edge = -(sm_log_sm.groupby(incoming["v"]).transform("sum"))
+
+    # Parental softmax: appearance edge gets 1/(1 + sum_exp_no_app),
+    # migration edges get exp(-cost)/(1 + sum_exp_no_app)
+    no_app = incoming["u"] >= 0
+    exp_neg_cost = np.exp(-incoming["cost"])
+    exp_no_app_sum = (
+        exp_neg_cost.where(no_app, 0.0).groupby(incoming["v"]).transform("sum")
+    )
+    parental_softmax = np.where(
+        no_app,
+        exp_neg_cost / (1 + exp_no_app_sum),
+        1.0 / (1 + exp_no_app_sum),
+    )
+
+    all_edges.loc[incoming.index, "softmax"] = softmax_vals.values
+    all_edges.loc[incoming.index, "softmax_entropy"] = entropy_per_edge.values
+    all_edges.loc[incoming.index, "parental_softmax"] = parental_softmax
 
     return ["softmax", "softmax_entropy", "parental_softmax"]
 

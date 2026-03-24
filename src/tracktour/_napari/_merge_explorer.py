@@ -473,7 +473,7 @@ class MergeExplorer(QWidget):
             layer.metadata["nxg"] = new_nxg
             from ._graph_conversion_util import get_tracks_from_nxg
 
-            new_tracks = get_tracks_from_nxg(new_nxg)
+            new_tracks, _ = get_tracks_from_nxg(new_nxg)
             layer.data = new_tracks.data
             layer.graph = new_tracks.graph
 

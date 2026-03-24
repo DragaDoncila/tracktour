@@ -56,6 +56,7 @@ def get_tracks_from_nxg(nxg: "nx.DiGraph"):
 
     Returns:
         tracks (napari.layers.Tracks): track layer of solution
+        sol_node_df (pd.DataFrame): node attribute DataFrame (reuse to avoid rebuilding)
     """
     if any("track_id" not in nxg.nodes[node] for node in nxg.nodes):
         assign_track_id(nxg)
@@ -70,7 +71,7 @@ def get_tracks_from_nxg(nxg: "nx.DiGraph"):
     track_layer = Tracks(
         track_df, graph=parent_connections, tail_length=1, name="tracks"
     )
-    return track_layer
+    return track_layer, sol_node_df
 
 
 def get_napari_graph(tracked, location_keys, frame_key, value_key):
@@ -109,12 +110,10 @@ def get_coloured_solution_layers(tracked, scale, segmentation):
     layer_scale = (1,) + tuple(scale)
 
     subgraph = tracked.as_nx_digraph(include_all_attrs=True)
-    tracks_layer = get_tracks_from_nxg(subgraph)
+    tracks_layer, sol_node_df = get_tracks_from_nxg(subgraph)
     tracks_layer.scale = layer_scale
     tracks_layer.metadata = {"nxg": subgraph}
 
-    # recolor segmentation and graph points by track_id
-    sol_node_df = pd.DataFrame.from_dict(subgraph.nodes, orient="index")
     masks = mask_by_id(sol_node_df, segmentation, frame_key, value_key)
     masked_seg = Labels(masks, name="Track Coloured Seg")
     masked_seg.scale = layer_scale
