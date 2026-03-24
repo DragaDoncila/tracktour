@@ -12,7 +12,6 @@ discarded.
 import re
 
 import numpy as np
-from scipy.special import softmax as scipy_softmax
 
 _FLOW_VAR_RE = re.compile(r"flow[\[(](\d+)")
 
@@ -34,13 +33,15 @@ def assign_migration_features(all_edges):
         Names of columns added: ['distance', 'chosen_neighbour_rank']
     """
     all_edges["chosen_neighbour_rank"] = -1
-
-    migration_edges = all_edges[(all_edges.u >= 0) & (all_edges.v >= 0)]
-    for _, group in migration_edges.groupby("u"):
-        sorted_group = group.sort_values(by="distance").reset_index()
-        for i, row in enumerate(sorted_group.itertuples()):
-            all_edges.loc[row.index, "chosen_neighbour_rank"] = i
-
+    migration_mask = (all_edges.u >= 0) & (all_edges.v >= 0)
+    ranks = (
+        all_edges.loc[migration_mask]
+        .groupby("u")["distance"]
+        .rank(method="first")
+        .astype(int)
+        - 1
+    )
+    all_edges.loc[migration_mask, "chosen_neighbour_rank"] = ranks
     return ["distance", "chosen_neighbour_rank"]
 
 
@@ -68,20 +69,34 @@ def assign_sensitivity_features(all_edges, model):
     list[str]
         Names of columns added: ['sa_obj_low', 'sa_obj_up', 'sensitivity_diff']
     """
-    sa_obj_low = [None] * len(all_edges)
-    sa_obj_up = [None] * len(all_edges)
-    sens_diffs = [None] * len(all_edges)
-
+    # Collect Gurobi variable attributes in one tight loop with no DataFrame access.
+    # Row-level all_edges.loc inside a loop is expensive (creates a Series per call).
+    idx_list = []
+    sa_low_list = []
+    sa_up_list = []
+    x_list = []
     for var in model.getVars():
-        edg_idx = int(_FLOW_VAR_RE.match(var.varName).group(1))
-        edg_row = all_edges.loc[edg_idx]
-        if var.X == 0:
-            sens_diff = abs(edg_row["cost"] - var.SAObjLow)
-        else:
-            sens_diff = abs(edg_row["cost"] - var.SAObjUp)
-        sa_obj_low[edg_idx] = var.SAObjLow
-        sa_obj_up[edg_idx] = var.SAObjUp
-        sens_diffs[edg_idx] = sens_diff
+        idx_list.append(int(_FLOW_VAR_RE.match(var.varName).group(1)))
+        sa_low_list.append(var.SAObjLow)
+        sa_up_list.append(var.SAObjUp)
+        x_list.append(var.X)
+
+    idx_arr = np.array(idx_list)
+    sa_low_arr = np.array(sa_low_list)
+    sa_up_arr = np.array(sa_up_list)
+    x_arr = np.array(x_list)
+
+    costs = all_edges.loc[idx_arr, "cost"].values
+    sens_diff = np.where(
+        x_arr == 0, np.abs(costs - sa_low_arr), np.abs(costs - sa_up_arr)
+    )
+
+    sa_obj_low = np.full(len(all_edges), np.nan)
+    sa_obj_up = np.full(len(all_edges), np.nan)
+    sens_diffs = np.full(len(all_edges), np.nan)
+    sa_obj_low[idx_arr] = sa_low_arr
+    sa_obj_up[idx_arr] = sa_up_arr
+    sens_diffs[idx_arr] = sens_diff
 
     all_edges["sa_obj_low"] = sa_obj_low
     all_edges["sa_obj_up"] = sa_obj_up
@@ -121,23 +136,38 @@ def assign_probability_features(all_edges):
     all_edges["parental_softmax"] = -1.0
 
     # include appearance (u == -2) and migration edges (u >= 0), exclude exit edges
-    incoming = all_edges[
+    incoming = all_edges.loc[
         (all_edges.v >= 0) & ((all_edges.u == -2) | (all_edges.u >= 0))
     ]
-    for _, v_edges in incoming.groupby("v"):
-        softmax_dist = scipy_softmax(-v_edges.cost)
-        all_edges.loc[v_edges.index, "softmax"] = softmax_dist
-        entropy = -np.sum(softmax_dist * np.log(softmax_dist))
-        all_edges.loc[v_edges.index, "softmax_entropy"] = entropy
+    if incoming.empty:
+        return ["softmax", "softmax_entropy", "parental_softmax"]
 
-        v_edges_no_app = v_edges[v_edges.u >= 0]
-        v_edges_app = v_edges[v_edges.u == -2]
-        exp_sum = np.sum(np.exp(-v_edges_no_app.cost))
-        parental_softmax = np.exp(-v_edges_no_app.cost) / (1 + exp_sum)
-        all_edges.loc[v_edges_no_app.index, "parental_softmax"] = parental_softmax
-        all_edges.loc[v_edges_app.index, "parental_softmax"] = 1 - np.sum(
-            parental_softmax
-        )
+    # Numerically stable softmax: shift exponents by per-group min cost (= max of -cost)
+    group_min_cost = incoming.groupby("v")["cost"].transform("min")
+    shifted_exp = np.exp(-(incoming["cost"] - group_min_cost))
+    group_exp_sum = shifted_exp.groupby(incoming["v"]).transform("sum")
+    softmax_vals = shifted_exp / group_exp_sum
+
+    # Entropy: -sum(softmax * log(softmax)) per group, broadcast to each edge
+    sm_log_sm = softmax_vals * np.log(softmax_vals)
+    entropy_per_edge = -(sm_log_sm.groupby(incoming["v"]).transform("sum"))
+
+    # Parental softmax: appearance edge gets 1/(1 + sum_exp_no_app),
+    # migration edges get exp(-cost)/(1 + sum_exp_no_app)
+    no_app = incoming["u"] >= 0
+    exp_neg_cost = np.exp(-incoming["cost"])
+    exp_no_app_sum = (
+        exp_neg_cost.where(no_app, 0.0).groupby(incoming["v"]).transform("sum")
+    )
+    parental_softmax = np.where(
+        no_app,
+        exp_neg_cost / (1 + exp_no_app_sum),
+        1.0 / (1 + exp_no_app_sum),
+    )
+
+    all_edges.loc[incoming.index, "softmax"] = softmax_vals.values
+    all_edges.loc[incoming.index, "softmax_entropy"] = entropy_per_edge.values
+    all_edges.loc[incoming.index, "parental_softmax"] = parental_softmax
 
     return ["softmax", "softmax_entropy", "parental_softmax"]
 

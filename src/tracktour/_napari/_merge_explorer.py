@@ -86,8 +86,6 @@ class MergeExplorer(QWidget):
         base_layout.addWidget(self._export_geff_button.native)
         self.setLayout(base_layout)
 
-        viewer.bind_key("p", self._toggle_parent)
-
         self._on_tracks_layer_changed()
 
     def _clear_state(self):
@@ -465,7 +463,7 @@ class MergeExplorer(QWidget):
             (all_edges.u >= 0) & (all_edges.v >= 0) & (all_edges.flow > 0)
         ].copy()
         tracked.tracked_edges = migration_edges
-        new_nxg = tracked.as_nx_digraph()
+        new_nxg = tracked.as_nx_digraph(include_all_attrs=True)
 
         self._nxg = new_nxg
         self._oracle_corrections = {}
@@ -475,7 +473,7 @@ class MergeExplorer(QWidget):
             layer.metadata["nxg"] = new_nxg
             from ._graph_conversion_util import get_tracks_from_nxg
 
-            new_tracks = get_tracks_from_nxg(new_nxg)
+            new_tracks, _ = get_tracks_from_nxg(new_nxg)
             layer.data = new_tracks.data
             layer.graph = new_tracks.graph
 

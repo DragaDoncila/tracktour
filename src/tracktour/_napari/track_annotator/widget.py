@@ -950,7 +950,7 @@ class TrackAnnotator(QWidget):
             show_info("No ground truth tracks to display. Try annotating some edges!")
             return
         seg_layer_scale = self._seg_combo.value.scale
-        tracks = get_tracks_from_nxg(self._state.gt_graph)
+        tracks, _ = get_tracks_from_nxg(self._state.gt_graph)
         tracks.name = GT_TRACKS_NAME
         tracks.scale = seg_layer_scale
         if GT_TRACKS_NAME in self._viewer.layers:
