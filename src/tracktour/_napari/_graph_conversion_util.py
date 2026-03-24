@@ -118,12 +118,6 @@ def get_coloured_solution_layers(tracked, scale, segmentation):
     masks = mask_by_id(sol_node_df, segmentation, frame_key, value_key)
     masked_seg = Labels(masks, name="Track Coloured Seg")
     masked_seg.scale = layer_scale
-    # subgraph, tracks layer and graph layer **all** need to know about colour :<<<<
-    color_dict = {
-        node_id: (node_info["track_id"], masked_seg.get_color(node_info["track_id"]))
-        for node_id, node_info in subgraph.nodes(data=True)
-    }
-    nx.set_node_attributes(subgraph, {k: v[1] for k, v in color_dict.items()}, "color")
     return masked_seg, tracks_layer
 
 

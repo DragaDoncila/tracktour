@@ -4,17 +4,16 @@ import pandas as pd
 
 
 def mask_by_id(nodes: pd.DataFrame, seg: np.ndarray, frame_key: str, value_key: str):
-    masks = np.zeros_like(seg)
-    for row in nodes.itertuples():
-        tid = getattr(row, "track_id")
-        t = getattr(row, frame_key)
-        orig_label = getattr(row, value_key)
-        mask = seg[t] == orig_label
-        masks[t][mask] = tid
-
-    unassigned = nodes[nodes["track_id"] == -1]
-    if len(unassigned) != 0:
+    if (nodes["track_id"] == -1).any():
         raise ValueError("Unassigned track_id for nodes!")
+
+    masks = np.zeros_like(seg)
+    for t, frame_nodes in nodes.groupby(frame_key):
+        frame_seg = seg[t]
+        max_label = int(frame_seg.max())
+        label_to_tid = np.zeros(max_label + 1, dtype=masks.dtype)
+        label_to_tid[frame_nodes[value_key].values] = frame_nodes["track_id"].values
+        masks[t] = label_to_tid[frame_seg]
 
     return masks
 
