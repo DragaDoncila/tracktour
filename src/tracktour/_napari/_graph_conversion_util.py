@@ -3,7 +3,7 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 import pandas as pd
-from napari.layers import Labels, Points, Tracks
+from napari.layers import Labels, Tracks
 
 from tracktour._graph_util import assign_track_id
 from tracktour._viz_util import mask_by_id
@@ -125,14 +125,7 @@ def get_coloured_solution_layers(tracked, scale, segmentation):
         for node_id, node_info in subgraph.nodes(data=True)
     }
     nx.set_node_attributes(subgraph, {k: v[1] for k, v in color_dict.items()}, "color")
-    coloured_points = Points(
-        sol_node_df[[frame_key] + list(location_keys)], name="Track Coloured Points"
-    )
-    coloured_points.face_color = [val[1] for val in color_dict.values()]
-    coloured_points.scale = layer_scale
-    coloured_points.size = 1
-
-    return coloured_points, masked_seg, tracks_layer
+    return masked_seg, tracks_layer
 
 
 def get_nxg_from_tracks(tracks_layer: "napari.layers.Tracks"):
