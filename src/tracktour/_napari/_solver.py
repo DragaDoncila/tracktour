@@ -144,6 +144,9 @@ class TrackingSolver(Container):
         self._viewer.add_layer(tracks)
         self._tracked = tracked
 
+        # turn off original segmentation layer
+        seg_layer.visible = False
+
     def _solve_from_points(
         self, points_layer, n_neighbours, n_children, cost_choice, allow_merges
     ):

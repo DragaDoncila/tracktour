@@ -106,7 +106,6 @@ def get_napari_graph(tracked, location_keys, frame_key, value_key):
 def get_coloured_solution_layers(tracked, scale, segmentation):
     frame_key = tracked.frame_key
     value_key = tracked.value_key
-    location_keys = tracked.location_keys
     layer_scale = (1,) + tuple(scale)
 
     subgraph = tracked.as_nx_digraph()
@@ -117,7 +116,7 @@ def get_coloured_solution_layers(tracked, scale, segmentation):
     # recolor segmentation and graph points by track_id
     sol_node_df = pd.DataFrame.from_dict(subgraph.nodes, orient="index")
     masks = mask_by_id(sol_node_df, segmentation, frame_key, value_key)
-    masked_seg = Labels(masks, name="Track Coloured Seg", visible=False)
+    masked_seg = Labels(masks, name="Track Coloured Seg")
     masked_seg.scale = layer_scale
     # subgraph, tracks layer and graph layer **all** need to know about colour :<<<<
     color_dict = {
