@@ -58,12 +58,16 @@ packages = ["src"]
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
 napari = [
-    "napari<0.7.0",
     "matplotlib",
+    "napari<0.7.0",
+    "napari-geff",
     "napari-matplotlib",
     "superqt"
 ]
-test = ["pytest>=6.0", "napari[all,testing]"]
+test = [
+    "pytest>=6.0",
+    "napari[all,testing]<0.7.0",
+]
 dev = ["pre-commit"]
 
 [project.urls]
