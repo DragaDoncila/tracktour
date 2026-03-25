@@ -60,6 +60,8 @@ packages = ["src"]
 napari = [
     "napari<0.7.0",
     "matplotlib",
+    "napari-matplotlib",
+    "superqt"
 ]
 test = ["pytest>=6.0", "napari[all,testing]"]
 dev = ["pre-commit"]
