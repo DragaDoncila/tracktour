@@ -9,11 +9,14 @@ TRACK_NODES_LAYER = "Track Nodes"
 # Okabe-Ito colourblind-friendly colours as RGBA float tuples
 COLOUR_DEFAULT = (0.667, 0.667, 0.667, 1.0)  # Grey — default node
 COLOUR_MERGE = (0.835, 0.369, 0.0, 1.0)  # Vermillion (#D55E00)
-COLOUR_PARENT_A = (0.0, 0.447, 0.698, 1.0)  # Blue (#0072B2)
-COLOUR_PARENT_B = (0.902, 0.624, 0.0, 1.0)  # Orange (#E69F00)
+COLOUR_PARENT = (0.0, 0.447, 0.698, 1.0)  # Blue (#0072B2)
 COLOUR_CHILD = (0.0, 0.620, 0.451, 1.0)  # Bluish green (#009E73)
 COLOUR_ACTIVE = (1.0, 1.0, 1.0, 1.0)  # White — active parent
 COLOUR_MARKED = (0.502, 0.502, 0.502, 1.0)  # Grey — marked for exit
+
+SYMBOL_MERGE = "star"
+SYMBOL_PARENT = "diamond"
+SYMBOL_CHILD = "square"
 
 
 class MergeExplorer(QWidget):
@@ -340,7 +343,7 @@ class MergeExplorer(QWidget):
         nxg = self._nxg
         predecessors = sorted(nxg.predecessors(merge_id))
         successors = list(nxg.successors(merge_id))
-        base_parent_colors = [COLOUR_PARENT_A, COLOUR_PARENT_B]
+        base_parent_colors = [COLOUR_PARENT, COLOUR_PARENT]
 
         # Style merge node
         if merge_id in self._node_id_to_point_idx:
@@ -353,9 +356,8 @@ class MergeExplorer(QWidget):
             if parent_id not in self._node_id_to_point_idx:
                 continue
             idx = self._node_id_to_point_idx[parent_id]
-            symbol = "disc" if i == 0 else "ring"
             color = self._parent_color(parent_id, merge_id, base_parent_colors[i])
-            nodes_layer.symbol[idx] = symbol
+            nodes_layer.symbol[idx] = SYMBOL_PARENT
             nodes_layer.face_color[idx] = color
 
         # Style children
@@ -363,7 +365,7 @@ class MergeExplorer(QWidget):
             if child_id not in self._node_id_to_point_idx:
                 continue
             idx = self._node_id_to_point_idx[child_id]
-            nodes_layer.symbol[idx] = "square"
+            nodes_layer.symbol[idx] = SYMBOL_CHILD
             nodes_layer.face_color[idx] = COLOUR_CHILD
 
         # Trigger layer refresh
