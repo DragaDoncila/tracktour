@@ -67,6 +67,7 @@ napari = [
 test = [
     "pytest>=6.0",
     "napari[all,testing]<0.7.0",
+    "tracktour[napari]"
 ]
 dev = ["pre-commit"]
 
