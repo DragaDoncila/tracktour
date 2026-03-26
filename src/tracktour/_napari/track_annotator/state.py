@@ -372,3 +372,45 @@ class AnnotationState:
             Attribute key to remove
         """
         self.original_graph.edges[edge].pop(key, None)
+
+    @property
+    def corrected_graph(self) -> nx.DiGraph:
+        """Build a corrected graph from the original graph and annotations.
+
+        Unseen/unannotated edges and nodes are kept as-is from the original
+        graph. FP nodes and their incident edges are removed. FP edges without
+        a correction are removed. Corrected (FN) edges and FN nodes replace the
+        removed FP elements.
+
+        Returns
+        -------
+        nx.DiGraph
+            Corrected graph using original node IDs for TP nodes and GT node
+            IDs for FN nodes.
+        """
+        G = self.original_graph.copy()
+
+        # Remove FP nodes; networkx also removes their incident edges
+        for node_id in self._fp_objects:
+            if G.has_node(node_id):
+                G.remove_node(node_id)
+
+        # Remove remaining FP edges not already removed by node deletion
+        for edge in self._fp_edges:
+            if G.has_edge(*edge):
+                G.remove_edge(*edge)
+
+        # Add FN nodes (new detections absent from the original graph)
+        for gt_node_id in self._fn_objects:
+            G.add_node(gt_node_id, **self.gt_graph.nodes[gt_node_id])
+
+        # Add corrected edges, resolving GT node IDs back to original IDs for
+        # TP nodes (orig_idx != -1) and keeping GT IDs for FN nodes
+        for gt_src, gt_tgt in self._fn_edges:
+            src_orig = self.gt_graph.nodes[gt_src].get("orig_idx", -1)
+            tgt_orig = self.gt_graph.nodes[gt_tgt].get("orig_idx", -1)
+            c_src = gt_src if src_orig == -1 else src_orig
+            c_tgt = gt_tgt if tgt_orig == -1 else tgt_orig
+            G.add_edge(c_src, c_tgt, **self.gt_graph.edges[gt_src, gt_tgt])
+
+        return G

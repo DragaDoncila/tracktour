@@ -1,11 +1,11 @@
-import glob
-import os
 import warnings
 
+import matplotlib.style as mplstyle
 import networkx as nx
 import numpy as np
-from magicgui.widgets import FileEdit, PushButton, create_widget
+from magicgui.widgets import PushButton, create_widget
 from napari.utils.notifications import show_info
+from napari_matplotlib.base import BaseNapariMPLWidget
 from qtpy.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from .._graph_conversion_util import get_nxg_from_tracks, get_tracks_from_nxg
@@ -72,6 +72,35 @@ TP_NODE_VOTES = "tracktour_annotated_tp_votes"
 
 OUT_GT_GRAPH_NAME = "tracktour_gt_graph"
 OUT_SOL_GRAPH_NAME = "tracktour_original_graph"
+OUT_CORRECTED_GRAPH_NAME = "tracktour_corrected_graph"
+
+
+class _PrecisionWidget(BaseNapariMPLWidget):
+    """Precision plot widget themed to match napari."""
+
+    def __init__(self, napari_viewer):
+        super().__init__(napari_viewer)
+        self.figure.set_layout_engine("none")
+        self.toolbar.setVisible(False)
+        self.setMaximumHeight(238)
+        self.add_single_axes()
+
+        with mplstyle.context(self.napari_theme_style_sheet):
+            self.axes.set_xlabel("Annotation step")
+            self.axes.set_ylabel("Precision")
+            self.axes.set_ylim(-0.05, 1.05)
+            (self.rolling_line,) = self.axes.plot(
+                [], [], label="Rolling precision (last 100)"
+            )
+            (self.estimate_line,) = self.axes.plot(
+                [], [], linestyle="--", color="red", label="Estimated precision"
+            )
+            leg = self.axes.legend(
+                loc="upper right", ncol=1, fontsize="x-small", frameon=False
+            )
+            label_color = self.axes.xaxis.label.get_color()
+            for text in leg.get_texts():
+                text.set_color(label_color)
 
 
 class TrackAnnotator(QWidget):
@@ -155,19 +184,14 @@ class TrackAnnotator(QWidget):
 
         # widgets for export
         self._view_ground_truth_button = PushButton(text="View Ground Truth")
-
-        self._export_layout = QHBoxLayout()
-        self._export_path = FileEdit(
-            mode="d", filter="*.tracktour", label="Export Path"
-        )
-        self._save_annotations_button = PushButton(text="Save Annotations")
-        self._save_annotations_button.clicked.connect(self._save_annotated_graphs)
-        self._save_project_button = PushButton(text="Save Project")
-        self._save_project_button.enabled = False  # TODO: implement project saving
         self._view_ground_truth_button.clicked.connect(self._add_ground_truth_tracks)
 
-        self._export_layout.addWidget(self._save_annotations_button.native)
-        self._export_layout.addWidget(self._save_project_button.native)
+        self._export_corrected_button = PushButton(text="Export Corrected Solution")
+        self._export_corrected_button.clicked.connect(self._export_corrected_graph)
+        self._export_annotated_button = PushButton(text="Export Annotated Solution")
+        self._export_annotated_button.clicked.connect(self._export_annotated_graph)
+        self._export_gt_button = PushButton(text="Export Ground Truth")
+        self._export_gt_button.clicked.connect(self._export_ground_truth_graph)
 
         # add everything to the layout
         self.base_layout.addWidget(self._seg_combo.native)
@@ -183,8 +207,9 @@ class TrackAnnotator(QWidget):
         self.base_layout.addWidget(self._precision_panel)
         self.base_layout.addWidget(self._view_ground_truth_button.native)
         self.base_layout.addWidget(get_separator_widget())
-        self.base_layout.addWidget(self._export_path.native)
-        self.base_layout.addLayout(self._export_layout)
+        self.base_layout.addWidget(self._export_corrected_button.native)
+        self.base_layout.addWidget(self._export_annotated_button.native)
+        self.base_layout.addWidget(self._export_gt_button.native)
         self.setLayout(self.base_layout)
 
         self._setup_annotation_layers()
@@ -1131,39 +1156,16 @@ class TrackAnnotator(QWidget):
     # -----------------------------------------------------------------------
 
     def _build_precision_panel(self):
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-        from matplotlib.figure import Figure
         from superqt import QCollapsible
 
         collapsible = QCollapsible("Precision Estimate")
         collapsible.collapse(animate=False)
 
-        fig = Figure(figsize=(4, 2.3))
-        canvas = FigureCanvasQTAgg(fig)
-        canvas.setMaximumHeight(238)
-        self._precision_fig = fig
-        self._precision_canvas = canvas
-
-        ax = fig.add_subplot()
-        ax.set_xlabel("Annotation step")
-        ax.set_ylabel("Precision")
-        ax.set_ylim(-0.05, 1.05)
-        self._precision_ax = ax
-
-        (self._rolling_line,) = ax.plot([], [], label="Rolling precision (last 100)")
-        (self._estimate_line,) = ax.plot(
-            [], [], linestyle="--", color="red", label="Estimated precision"
-        )
-        fig.tight_layout()
-        fig.subplots_adjust(bottom=0.28)
-        ax.legend(
-            loc="lower center",
-            bbox_to_anchor=(0.5, 0.005),
-            bbox_transform=fig.transFigure,
-            ncol=2,
-            fontsize="x-small",
-            frameon=False,
-        )
+        precision_widget = _PrecisionWidget(self._viewer)
+        self._precision_canvas = precision_widget.canvas
+        self._precision_ax = precision_widget.axes
+        self._rolling_line = precision_widget.rolling_line
+        self._estimate_line = precision_widget.estimate_line
 
         button_row = QWidget()
         row_layout = QHBoxLayout()
@@ -1176,7 +1178,7 @@ class TrackAnnotator(QWidget):
         row_layout.addWidget(self._precision_label)
         button_row.setLayout(row_layout)
 
-        collapsible.addWidget(canvas)
+        collapsible.addWidget(precision_widget)
         collapsible.addWidget(button_row)
         return collapsible
 
@@ -1227,34 +1229,53 @@ class TrackAnnotator(QWidget):
 
         self._precision_canvas.draw_idle()
 
-    def _save_annotated_graphs(self):
-        dir_path = self._export_path.value
-        if (
-            self._state is None
-            or len(self._state.gt_graph.nodes) == 0
-            or len(self._state.gt_graph.edges) == 0
-        ):
-            show_info("Nothing so save. Try annotating some edges!")
-            return
-        gt_path = os.path.join(dir_path, f"{OUT_GT_GRAPH_NAME}.graphml")
-        sol_path = os.path.join(dir_path, f"{OUT_SOL_GRAPH_NAME}.graphml")
-        if os.path.exists(gt_path):
-            show_info("Ground truth graph already exists. Saving new graph.")
-            already_saved = glob.glob(
-                os.path.join(dir_path, f"{OUT_GT_GRAPH_NAME}*.graphml")
-            )
-            num_saved = len(already_saved)
-            gt_path = os.path.join(dir_path, f"{OUT_GT_GRAPH_NAME}_{num_saved}.graphml")
-            sol_path = os.path.join(
-                dir_path, f"{OUT_SOL_GRAPH_NAME}_{num_saved}.graphml"
-            )
-        # delete and then restore color_array to avoid error in saving
-        sol_nxg = self._state.original_graph
-        colors = {
-            node: sol_nxg.nodes[node].pop("color", None) for node in sol_nxg.nodes
-        }
+    def _check_state_for_export(self) -> bool:
+        if self._state is None:
+            show_info("No annotation session active.")
+            return False
+        return True
 
-        nx.write_graphml(self._state.gt_graph, gt_path)
-        nx.write_graphml(self._state.original_graph, sol_path)
-        nx.set_node_attributes(sol_nxg, colors, "color")
-        print("Saved")
+    def _write_graph_geff(self, graph, name: str) -> None:
+        """Prompt for a save path and write graph to GEFF.
+
+        Parameters
+        ----------
+        graph : nx.DiGraph
+            Graph to write.
+        name : str
+            Default filename stem shown in the save dialog.
+        """
+        from qtpy.QtWidgets import QFileDialog
+
+        from ..._geff_io import write_graph_geff
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export GEFF", name, "GEFF (*.geff)"
+        )
+        if not path:
+            return
+
+        g = graph.copy()
+        for node in g.nodes:
+            g.nodes[node].pop("color", None)
+
+        write_graph_geff(g, path, overwrite=True)
+        show_info(f"Exported to {path}")
+
+    def _export_corrected_graph(self) -> None:
+        if not self._check_state_for_export():
+            return
+        self._write_graph_geff(self._state.corrected_graph, OUT_CORRECTED_GRAPH_NAME)
+
+    def _export_annotated_graph(self) -> None:
+        if not self._check_state_for_export():
+            return
+        self._write_graph_geff(self._state.original_graph, OUT_SOL_GRAPH_NAME)
+
+    def _export_ground_truth_graph(self) -> None:
+        if not self._check_state_for_export():
+            return
+        if len(self._state.gt_graph.nodes) == 0:
+            show_info("No ground truth annotations yet.")
+            return
+        self._write_graph_geff(self._state.gt_graph, OUT_GT_GRAPH_NAME)

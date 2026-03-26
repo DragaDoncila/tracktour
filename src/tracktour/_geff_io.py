@@ -41,7 +41,10 @@ def write_solution_geff(tracked, path, overwrite=False):
     """
     g = tracked.as_nx_digraph(include_all_attrs=True)
     axis_names = _axis_names(tracked)
-    geff.write(g, path, axis_names=axis_names, overwrite=overwrite)
+    axis_types = _axis_types(tracked)
+    geff.write(
+        g, path, axis_names=axis_names, axis_types=axis_types, overwrite=overwrite
+    )
 
 
 def write_candidate_geff(tracked, path, overwrite=False):
@@ -71,7 +74,35 @@ def write_candidate_geff(tracked, path, overwrite=False):
     g = tracked.as_candidate_nx_digraph(include_all_attrs=True)
     g = _remap_negative_node_ids(g)
     axis_names = _axis_names(tracked)
-    geff.write(g, path, axis_names=axis_names, overwrite=overwrite)
+    axis_types = _axis_types(tracked)
+    geff.write(
+        g, path, axis_names=axis_names, axis_types=axis_types, overwrite=overwrite
+    )
+
+
+def write_graph_geff(graph, path, overwrite=False):
+    """Write a plain nx.DiGraph to a GEFF file.
+
+    Infers axis names and types from node attributes (``t``, optionally ``z``,
+    ``y``, ``x``).
+
+    Parameters
+    ----------
+    graph : nx.DiGraph
+        Graph to write. Nodes must have ``t``, ``y``, ``x`` attributes and
+        optionally ``z``.
+    path : str or Path
+        Output path for the zarr-backed GEFF store.
+    overwrite : bool, optional
+        If True, overwrite an existing GEFF at path. Default False.
+    """
+    sample_attrs = next(iter(graph.nodes(data=True)), (None, {}))[1]
+    has_z = "z" in sample_attrs
+    axis_names = ["t", "z", "y", "x"] if has_z else ["t", "y", "x"]
+    axis_types = ["time"] + ["space"] * (len(axis_names) - 1)
+    geff.write(
+        graph, path, axis_names=axis_names, axis_types=axis_types, overwrite=overwrite
+    )
 
 
 def read_geff(path):
@@ -122,6 +153,10 @@ def read_candidate_geff(path):
 
 def _axis_names(tracked):
     return [tracked.frame_key] + list(tracked.location_keys)
+
+
+def _axis_types(tracked):
+    return ["time"] + ["space"] * len(tracked.location_keys)
 
 
 def _remap_negative_node_ids(g):
