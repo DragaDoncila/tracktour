@@ -24,19 +24,19 @@ contributions:
       title: Tracks Writer
       python_name: tracktour._napari._read_write_tracks:write_tracks
   widgets:
-    - command: tracktour.merge_explorer
-      display_name: Merge Explorer
     - command: tracktour.track_solver
       display_name: Track Solver
+    - command: tracktour.merge_explorer
+      display_name: Merge Explorer
     - command: tracktour.track_annotator
-      display_name: Annotate Solved Tracks
+      display_name: Track Annotator
     - command: tracktour.annotate_gt
       display_name: Annotate Ground Truth
-  readers:
-    - command: tracktour.get_reader
-      filename_patterns: ['*.csv', '*.json']
-      accepts_directories: False
-  writers:
-    - command: tracktour.write_tracks
-      layer_types: ['tracks']
-      filename_extensions: ['.csv']
+  # readers:
+  #   - command: tracktour.get_reader
+  #     filename_patterns: ['*.csv', '*.json']
+  #     accepts_directories: False
+  # writers:
+  #   - command: tracktour.write_tracks
+  #     layer_types: ['tracks']
+  #     filename_extensions: ['.csv']
