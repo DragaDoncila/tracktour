@@ -186,6 +186,49 @@ def get_int_loc(loc):
     return np.round(loc).astype(int)
 
 
+def compute_zoom_for_two_points(viewer, loc1, loc2, current_scale, padding=50):
+    """Compute zoom so the camera fits both loc1 and loc2 with padding.
+
+    Parameters
+    ----------
+    viewer : napari.Viewer
+    loc1, loc2 : array-like
+        Location arrays [t, ...spatial]. Time at index 0 is excluded.
+    current_scale : array-like
+        Spatial scale (without time dimension).
+    padding : float
+        Padding in world units on each side.
+
+    Returns
+    -------
+    float
+        Zoom level.
+    """
+    import warnings
+
+    ndisplay = viewer.dims.ndisplay
+    scale_nd = np.asarray(current_scale)[-ndisplay:]
+    loc1_world = np.asarray(loc1)[-ndisplay:] * scale_nd
+    loc2_world = np.asarray(loc2)[-ndisplay:] * scale_nd
+    bbox_size = np.maximum(loc1_world, loc2_world) - np.minimum(loc1_world, loc2_world)
+    bbox_size = np.maximum(bbox_size, 1.0) + 2 * padding
+
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="Public access to Window.qt_viewer is deprecated"
+            )
+            canvas_size = np.array(viewer.window.qt_viewer.canvas.size)
+        if ndisplay == 2:
+            # canvas.size is (width, height); bbox_size is [y_world, x_world]
+            zoom = np.min(canvas_size / bbox_size[::-1])
+        else:
+            zoom = np.min(canvas_size) / np.max(bbox_size)
+    except Exception:
+        zoom = 30
+    return zoom
+
+
 def point_size_for_yx_extent(y_extent, x_extent):
     """Compute an appropriate napari points layer size for the given y/x data extent.
 

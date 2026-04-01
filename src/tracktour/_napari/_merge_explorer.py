@@ -4,7 +4,10 @@ from magicgui.widgets import PushButton, create_widget
 from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from superqt import QToggleSwitch
 
-from tracktour._napari.track_annotator.utils import point_size_for_yx_extent
+from tracktour._napari.track_annotator.utils import (
+    compute_zoom_for_two_points,
+    point_size_for_yx_extent,
+)
 
 TRACK_NODES_LAYER = "Track Nodes"
 
@@ -274,7 +277,6 @@ class MergeExplorer(QWidget):
             return
         merge_id = self._merge_nodes[self._merge_idx]
         merge_node = self._nxg.nodes[merge_id]
-        spatial = tuple(float(merge_node[k]) for k in self._loc_keys)
 
         # Start at the earliest parent frame so the user can step forward to the merge
         predecessors = list(self._nxg.predecessors(merge_id))
@@ -283,9 +285,27 @@ class MergeExplorer(QWidget):
         else:
             t = int(merge_node[self._frame_key])
 
+        tracks_layer = self._tracks_layer_combo.value
+        scale = (
+            np.array(tracks_layer.scale[1:])
+            if tracks_layer is not None
+            else np.ones(len(self._loc_keys))
+        )
+
+        if len(predecessors) >= 2:
+            p_locs = [self._node_pos(p) for p in predecessors[:2]]
+            spatial_center = (p_locs[0][1:] + p_locs[1][1:]) / 2
+            zoom = compute_zoom_for_two_points(
+                self._viewer, p_locs[0], p_locs[1], scale, padding=50
+            )
+        else:
+            p_locs = [self._node_pos(predecessors[0])] if predecessors else []
+            spatial_center = np.array([float(merge_node[k]) for k in self._loc_keys])
+            zoom = 30
+
         self._viewer.dims.current_step = (t,) + (0,) * len(self._loc_keys)
-        self._viewer.camera.center = spatial
-        self._viewer.camera.zoom = 8
+        self._viewer.camera.center = spatial_center * scale
+        self._viewer.camera.zoom = zoom
 
         self._show_merge_context(merge_id)
 
