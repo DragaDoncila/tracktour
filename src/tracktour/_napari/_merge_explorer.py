@@ -1,3 +1,5 @@
+import warnings
+
 import networkx as nx
 import numpy as np
 from magicgui.widgets import PushButton, create_widget
@@ -271,6 +273,11 @@ class MergeExplorer(QWidget):
         self._merge_idx = max(0, self._merge_idx + 1)
         self._update_nav()
         self._navigate_to_current()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="Public access to Window.qt_viewer is deprecated"
+            )
+            self._viewer.window.qt_viewer.dims.setFocus()
 
     def _navigate_to_current(self):
         if not self._merge_nodes or self._nxg is None or self._merge_idx < 0:
