@@ -69,7 +69,7 @@ def get_tracks_from_nxg(nxg: "nx.DiGraph"):
         ["track_id", "t"]
     )[["track_id", "t"] + location_cols]
     track_layer = Tracks(
-        track_df, graph=parent_connections, tail_length=1, name="tracks"
+        track_df, graph=parent_connections, tail_length=4, name="tracks"
     )
     return track_layer, sol_node_df
 
