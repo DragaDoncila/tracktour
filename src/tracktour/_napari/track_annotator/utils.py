@@ -186,6 +186,24 @@ def get_int_loc(loc):
     return np.round(loc).astype(int)
 
 
+def point_size_for_yx_extent(y_extent, x_extent):
+    """Compute an appropriate napari points layer size for the given y/x data extent.
+
+    Parameters
+    ----------
+    y_extent : float
+        Range of y coordinates (max - min), in data pixels.
+    x_extent : float
+        Range of x coordinates (max - min), in data pixels.
+
+    Returns
+    -------
+    float
+        Point size in data coordinates.
+    """
+    return max(float(max(y_extent, x_extent)) / 80.0, 1.0)
+
+
 def get_src_tgt_idx(points_symbols):
     """Get the source and target indices from point symbols.
 

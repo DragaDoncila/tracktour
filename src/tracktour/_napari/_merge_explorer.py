@@ -4,6 +4,8 @@ from magicgui.widgets import PushButton, create_widget
 from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from superqt import QToggleSwitch
 
+from tracktour._napari.track_annotator.utils import point_size_for_yx_extent
+
 TRACK_NODES_LAYER = "Track Nodes"
 
 # Okabe-Ito colourblind-friendly colours as RGBA float tuples
@@ -215,6 +217,10 @@ class MergeExplorer(QWidget):
             nodes_layer.symbol = ["disc"] * n_nodes
             nodes_layer.face_color = [COLOUR_DEFAULT] * n_nodes
         else:
+            pt_size = point_size_for_yx_extent(
+                positions[:, -2].max() - positions[:, -2].min(),
+                positions[:, -1].max() - positions[:, -1].min(),
+            )
             nodes_layer = self._viewer.add_points(
                 positions,
                 name=TRACK_NODES_LAYER,
@@ -222,7 +228,7 @@ class MergeExplorer(QWidget):
                 symbol=["disc"] * n_nodes,
                 face_color=[COLOUR_DEFAULT] * n_nodes,
                 opacity=0.7,
-                size=6,
+                size=pt_size,
             )
             if tracks_layer is not None:
                 nodes_layer.scale = tracks_layer.scale

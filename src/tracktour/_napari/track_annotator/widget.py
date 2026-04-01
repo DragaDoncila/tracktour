@@ -30,6 +30,7 @@ from .utils import (
     get_region_center,
     get_separator_widget,
     get_src_tgt_idx,
+    point_size_for_yx_extent,
     split_coords,
 )
 
@@ -283,7 +284,10 @@ class TrackAnnotator(QWidget):
         return bounding_min, bounding_max
 
     def _handle_current_step_change(self, event):
-        if EDGE_FOCUS_POINT_NAME not in self._viewer.layers:
+        if (
+            EDGE_FOCUS_POINT_NAME not in self._viewer.layers
+            or self._edge_sampler is None
+        ):
             return
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
         src_loc, tgt_loc = self._get_edge_locs()
@@ -368,10 +372,12 @@ class TrackAnnotator(QWidget):
                 point_focus_layer.face_color = points_face_color
 
         else:
+            seg_shape = self._seg_combo.value.data.shape
+            pt_size = point_size_for_yx_extent(seg_shape[-2], seg_shape[-1])
             point_focus_layer = self._viewer.add_points(
                 points_data,
                 name=EDGE_FOCUS_POINT_NAME,
-                size=2,
+                size=pt_size,
                 symbol=points_symbols,
                 face_color=points_face_color,
                 scale=current_scale,
@@ -1085,7 +1091,7 @@ class TrackAnnotator(QWidget):
                 item.widget().deleteLater()
         self._feature_rows.clear()
 
-        for col in feature_cols:
+        for col in sorted(feature_cols):
             row = QWidget()
             row_layout = QHBoxLayout()
             row_layout.setContentsMargins(0, 0, 0, 0)
