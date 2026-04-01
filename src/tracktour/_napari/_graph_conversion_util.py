@@ -115,7 +115,7 @@ def get_coloured_solution_layers(tracked, scale, segmentation):
     tracks_layer.metadata = {"nxg": subgraph}
 
     masks = mask_by_id(sol_node_df, segmentation, frame_key, value_key)
-    masked_seg = Labels(masks, name="Track Coloured Seg")
+    masked_seg = Labels(masks, name="Track Coloured Seg", opacity=0.4)
     masked_seg.scale = layer_scale
     return masked_seg, tracks_layer
 
