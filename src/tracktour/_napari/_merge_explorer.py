@@ -292,14 +292,18 @@ class MergeExplorer(QWidget):
             else np.ones(len(self._loc_keys))
         )
 
-        if len(predecessors) >= 2:
-            p_locs = [self._node_pos(p) for p in predecessors[:2]]
-            spatial_center = (p_locs[0][1:] + p_locs[1][1:]) / 2
+        successors = list(self._nxg.successors(merge_id))
+        context_nodes = predecessors + successors
+        if context_nodes:
+            all_locs = np.array([self._node_pos(n) for n in context_nodes])
+            # Bounding box corners (time dim doesn't affect zoom — function uses [-ndisplay:])
+            loc_min = all_locs.min(axis=0)
+            loc_max = all_locs.max(axis=0)
+            spatial_center = (loc_min[1:] + loc_max[1:]) / 2
             zoom = compute_zoom_for_two_points(
-                self._viewer, p_locs[0], p_locs[1], scale, padding=50
+                self._viewer, loc_min, loc_max, scale, padding=50
             )
         else:
-            p_locs = [self._node_pos(predecessors[0])] if predecessors else []
             spatial_center = np.array([float(merge_node[k]) for k in self._loc_keys])
             zoom = 30
 
