@@ -972,6 +972,7 @@ class TrackAnnotator(QWidget):
     # -----------------------------------------------------------------------
 
     def _build_sampler_settings(self):
+        from qtpy.QtCore import Qt
         from qtpy.QtWidgets import QScrollArea
         from superqt import QCollapsible
 
@@ -999,10 +1000,10 @@ class TrackAnnotator(QWidget):
 
         self._edges_status_label = QLabel("No edges loaded")
 
-        # scrollable feature table
         self._feature_scroll = QScrollArea()
         self._feature_scroll.setWidgetResizable(True)
-        self._feature_scroll.setMaximumHeight(180)
+        self._feature_scroll.setMaximumHeight(240)
+        self._feature_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._feature_table_widget = QWidget()
         self._feature_table_layout = QVBoxLayout()
         self._feature_table_layout.setContentsMargins(0, 0, 0, 0)
@@ -1033,6 +1034,7 @@ class TrackAnnotator(QWidget):
         self._apply_random_button.native.setVisible(not is_ducb)
         if is_ducb and self._ducb_nxg is None:
             self._try_load_edges_from_layer()
+        self._sampler_settings.expand(animate=False)
         # Trajectory and Random both use _apply_random_button (shared "Apply" button)
 
     def _try_load_edges_from_layer(self):
@@ -1055,6 +1057,7 @@ class TrackAnnotator(QWidget):
         self._edges_status_label.setText(f"{n} edges, {m} features{src_label}")
         self._build_feature_table(feature_cols)
         self._apply_sampler_button.enabled = m > 0
+        self._sampler_settings.expand(animate=False)
 
     def _build_feature_table(self, feature_cols):
         from superqt import QToggleSwitch

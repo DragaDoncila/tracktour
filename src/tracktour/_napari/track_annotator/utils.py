@@ -218,7 +218,11 @@ def compute_zoom_for_two_points(viewer, loc1, loc2, current_scale, padding=50):
             warnings.filterwarnings(
                 "ignore", message="Public access to Window.qt_viewer is deprecated"
             )
-            canvas_size = np.array(viewer.window.qt_viewer.canvas.size)
+            qt_viewer = viewer.window.qt_viewer
+            # canvas.native is the QOpenGLWidget; width()/height() are Qt logical
+            # pixels, so QT_SCALE_FACTOR and hardware DPR are both handled correctly.
+            canvas_native = qt_viewer.canvas.native
+            canvas_size = np.array([canvas_native.width(), canvas_native.height()])
         if ndisplay == 2:
             # canvas.size is (width, height); bbox_size is [y_world, x_world]
             zoom = np.min(canvas_size / bbox_size[::-1])
