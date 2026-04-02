@@ -50,6 +50,9 @@ After solving, or curating your solution, you can export it to GEFF at any time 
 The `Tracker` object is the interface for producing tracking solutions. Below is a toy example with explicitly defined detections.
 
 ```python
+import pandas as pd
+from tracktour import Tracker
+
 # define the coordinates of ten detections across three frames.
 coords = [
     (0, 50.0, 50.0),
@@ -62,15 +65,28 @@ coords = [
     (2, 37, 53),
     (2, 28, 64),
 ]
-coords = pd.DataFrame(coords, columns=["t", "y", "x"])
+# dataframe with named columns
+coords = pd.DataFrame(
+    coords,
+    columns=["t", "y", "x"]
+)
 
 # initialize Tracker object
 tracker = Tracker(
-    im_shape=(100, 100),    # size of the image detections come from. Affects cost of detections appearing/disappearing
-    k_neighbours=2          # number of neighbours to consider for assignment in the next frame (default=10)
+    # size of the image detections come from.
+    # Affects cost of detections appearing/disappearing
+    im_shape=(100, 100),
+    # optional segmentation array.
+    # can be used for overlap costs (still under construction)
+    seg=None,
 )
 # solve
-tracked = tracker.solve(coords)
+tracked = tracker.solve(
+    coords,
+    # number of neighbours to consider for assignment
+    # in the next frame (default=10)
+    k_neighbours=2,
+)
 ```
 
 The `Tracked` object contains a copy of the detections, potentially reindexed, and a dataframe of edges that make up the solution.
@@ -86,6 +102,13 @@ You may want to convert the solution into a networkx graph for easier manipulati
 ```python
 solution_graph = tracked.as_nx_digraph()
 ```
+
+Or export it to GEFF.
+
+```python
+tracked.write_solution_geff("path/to/solution.geff")
+```
+
 
 ### Extracting Detections
 
