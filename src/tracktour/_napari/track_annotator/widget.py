@@ -1196,7 +1196,7 @@ class TrackAnnotator(QWidget):
                 self._precision_label.setText("Fit failed")
                 return
             precision = get_precision_estimate_at_end(n, n, c, p)
-            self._precision_label.setText(f"{precision:.3f} (c={c:.2f}, p={p:.3f})")
+            self._precision_label.setText(f"Est. Precision: {precision:.3f}")
             t_arr = np.arange(1, len(self._annotation_errors) + 1, dtype=float)
             h_vals = _h(t_arr, n, c, p)
             self._estimate_line.set_data(t_arr - 1, h_vals)
