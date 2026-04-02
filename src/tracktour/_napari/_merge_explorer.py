@@ -1,8 +1,15 @@
+import warnings
+
 import networkx as nx
 import numpy as np
 from magicgui.widgets import PushButton, create_widget
 from qtpy.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from superqt import QToggleSwitch
+
+from tracktour._napari.track_annotator.utils import (
+    compute_zoom_for_two_points,
+    point_size_for_yx_extent,
+)
 
 TRACK_NODES_LAYER = "Track Nodes"
 
@@ -215,6 +222,10 @@ class MergeExplorer(QWidget):
             nodes_layer.symbol = ["disc"] * n_nodes
             nodes_layer.face_color = [COLOUR_DEFAULT] * n_nodes
         else:
+            pt_size = point_size_for_yx_extent(
+                positions[:, -2].max() - positions[:, -2].min(),
+                positions[:, -1].max() - positions[:, -1].min(),
+            )
             nodes_layer = self._viewer.add_points(
                 positions,
                 name=TRACK_NODES_LAYER,
@@ -222,7 +233,7 @@ class MergeExplorer(QWidget):
                 symbol=["disc"] * n_nodes,
                 face_color=[COLOUR_DEFAULT] * n_nodes,
                 opacity=0.7,
-                size=6,
+                size=pt_size,
             )
             if tracks_layer is not None:
                 nodes_layer.scale = tracks_layer.scale
@@ -262,13 +273,17 @@ class MergeExplorer(QWidget):
         self._merge_idx = max(0, self._merge_idx + 1)
         self._update_nav()
         self._navigate_to_current()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="Public access to Window.qt_viewer is deprecated"
+            )
+            self._viewer.window.qt_viewer.dims.setFocus()
 
     def _navigate_to_current(self):
         if not self._merge_nodes or self._nxg is None or self._merge_idx < 0:
             return
         merge_id = self._merge_nodes[self._merge_idx]
         merge_node = self._nxg.nodes[merge_id]
-        spatial = tuple(float(merge_node[k]) for k in self._loc_keys)
 
         # Start at the earliest parent frame so the user can step forward to the merge
         predecessors = list(self._nxg.predecessors(merge_id))
@@ -277,9 +292,31 @@ class MergeExplorer(QWidget):
         else:
             t = int(merge_node[self._frame_key])
 
+        tracks_layer = self._tracks_layer_combo.value
+        scale = (
+            np.array(tracks_layer.scale[1:])
+            if tracks_layer is not None
+            else np.ones(len(self._loc_keys))
+        )
+
+        successors = list(self._nxg.successors(merge_id))
+        context_nodes = predecessors + successors
+        if context_nodes:
+            all_locs = np.array([self._node_pos(n) for n in context_nodes])
+            # Bounding box corners (time dim doesn't affect zoom — function uses [-ndisplay:])
+            loc_min = all_locs.min(axis=0)
+            loc_max = all_locs.max(axis=0)
+            spatial_center = (loc_min[1:] + loc_max[1:]) / 2
+            zoom = compute_zoom_for_two_points(
+                self._viewer, loc_min, loc_max, scale, padding=50
+            )
+        else:
+            spatial_center = np.array([float(merge_node[k]) for k in self._loc_keys])
+            zoom = 30
+
         self._viewer.dims.current_step = (t,) + (0,) * len(self._loc_keys)
-        self._viewer.camera.center = spatial
-        self._viewer.camera.zoom = 8
+        self._viewer.camera.center = spatial_center * scale
+        self._viewer.camera.zoom = zoom
 
         self._show_merge_context(merge_id)
 

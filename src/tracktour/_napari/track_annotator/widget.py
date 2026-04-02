@@ -22,6 +22,7 @@ from .controller import AnnotationController
 from .samplers import DUCBEdgeSampler, RandomEdgeSampler, TrajectoryEdgeSampler
 from .state import AnnotationState
 from .utils import (
+    compute_zoom_for_two_points,
     get_count_label_from_grid,
     get_counts_grid_layout,
     get_int_loc,
@@ -30,6 +31,7 @@ from .utils import (
     get_region_center,
     get_separator_widget,
     get_src_tgt_idx,
+    point_size_for_yx_extent,
     split_coords,
 )
 
@@ -283,7 +285,10 @@ class TrackAnnotator(QWidget):
         return bounding_min, bounding_max
 
     def _handle_current_step_change(self, event):
-        if EDGE_FOCUS_POINT_NAME not in self._viewer.layers:
+        if (
+            EDGE_FOCUS_POINT_NAME not in self._viewer.layers
+            or self._edge_sampler is None
+        ):
             return
         points_layer = self._viewer.layers[EDGE_FOCUS_POINT_NAME]
         src_loc, tgt_loc = self._get_edge_locs()
@@ -368,10 +373,12 @@ class TrackAnnotator(QWidget):
                 point_focus_layer.face_color = points_face_color
 
         else:
+            seg_shape = self._seg_combo.value.data.shape
+            pt_size = point_size_for_yx_extent(seg_shape[-2], seg_shape[-1])
             point_focus_layer = self._viewer.add_points(
                 points_data,
                 name=EDGE_FOCUS_POINT_NAME,
-                size=2,
+                size=pt_size,
                 symbol=points_symbols,
                 face_color=points_face_color,
                 scale=current_scale,
@@ -487,35 +494,9 @@ class TrackAnnotator(QWidget):
         self._viewer.dims.current_step = current_step
 
     def _compute_edge_zoom(self, src_loc, tgt_loc, current_scale, padding=50):
-        """Compute zoom so the camera fits both src and tgt with padding.
-
-        zoom = canvas_pixels / world_units.
-        In 2D view, matches canvas (width, height) to world (x, y).
-        In 3D view, uses min(canvas) / max(spatial_extent) as a conservative fit.
-        Frame dimension is always excluded.
-        """
-        ndisplay = self._viewer.dims.ndisplay
-        scale_nd = current_scale[-ndisplay:]
-        src_world = src_loc[-ndisplay:] * scale_nd
-        tgt_world = tgt_loc[-ndisplay:] * scale_nd
-        bbox_size = np.maximum(src_world, tgt_world) - np.minimum(src_world, tgt_world)
-        bbox_size = np.maximum(bbox_size, 1.0) + 2 * padding
-
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", message="Public access to Window.qt_viewer is deprecated"
-                )
-                canvas_size = np.array(self._viewer.window.qt_viewer.canvas.size)
-            if ndisplay == 2:
-                # canvas.size is (width, height); bbox_size is [y_world, x_world]
-                zoom = np.min(canvas_size / bbox_size[::-1])
-            else:
-                # 3D arcball: use most constraining axis conservatively
-                zoom = np.min(canvas_size) / np.max(bbox_size)
-        except Exception:
-            zoom = 30
-        return zoom
+        return compute_zoom_for_two_points(
+            self._viewer, src_loc, tgt_loc, current_scale, padding
+        )
 
     def _setup_thick_slicing(self, src_loc, tgt_loc, current_scale):
         """Turn on out_of_slice display for points and vectors.
@@ -991,6 +972,7 @@ class TrackAnnotator(QWidget):
     # -----------------------------------------------------------------------
 
     def _build_sampler_settings(self):
+        from qtpy.QtCore import Qt
         from qtpy.QtWidgets import QScrollArea
         from superqt import QCollapsible
 
@@ -1018,10 +1000,10 @@ class TrackAnnotator(QWidget):
 
         self._edges_status_label = QLabel("No edges loaded")
 
-        # scrollable feature table
         self._feature_scroll = QScrollArea()
         self._feature_scroll.setWidgetResizable(True)
-        self._feature_scroll.setMaximumHeight(180)
+        self._feature_scroll.setMaximumHeight(240)
+        self._feature_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._feature_table_widget = QWidget()
         self._feature_table_layout = QVBoxLayout()
         self._feature_table_layout.setContentsMargins(0, 0, 0, 0)
@@ -1052,6 +1034,7 @@ class TrackAnnotator(QWidget):
         self._apply_random_button.native.setVisible(not is_ducb)
         if is_ducb and self._ducb_nxg is None:
             self._try_load_edges_from_layer()
+        self._sampler_settings.expand(animate=False)
         # Trajectory and Random both use _apply_random_button (shared "Apply" button)
 
     def _try_load_edges_from_layer(self):
@@ -1074,6 +1057,7 @@ class TrackAnnotator(QWidget):
         self._edges_status_label.setText(f"{n} edges, {m} features{src_label}")
         self._build_feature_table(feature_cols)
         self._apply_sampler_button.enabled = m > 0
+        self._sampler_settings.expand(animate=False)
 
     def _build_feature_table(self, feature_cols):
         from superqt import QToggleSwitch
@@ -1085,7 +1069,7 @@ class TrackAnnotator(QWidget):
                 item.widget().deleteLater()
         self._feature_rows.clear()
 
-        for col in feature_cols:
+        for col in sorted(feature_cols):
             row = QWidget()
             row_layout = QHBoxLayout()
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -1212,7 +1196,7 @@ class TrackAnnotator(QWidget):
                 self._precision_label.setText("Fit failed")
                 return
             precision = get_precision_estimate_at_end(n, n, c, p)
-            self._precision_label.setText(f"{precision:.3f} (c={c:.2f}, p={p:.3f})")
+            self._precision_label.setText(f"Est. Precision: {precision:.3f}")
             t_arr = np.arange(1, len(self._annotation_errors) + 1, dtype=float)
             h_vals = _h(t_arr, n, c, p)
             self._estimate_line.set_data(t_arr - 1, h_vals)
