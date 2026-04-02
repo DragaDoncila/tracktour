@@ -27,7 +27,7 @@ required dependencies, but you will need a separate Gurobi Optimizer installatio
 
 `tracktour` is tested with all Python versions >=3.11.
 
-If you wish to use the `napari` plugin functionality, use `pip install tracktour[napari]`.
+If you wish to use the `napari` plugin functionality, use `pip install "tracktour[napari]"` if you already have `napari` installed, otherwise `pip install "tracktour[napari]" "napari[all]"`.
 
 ## napari Plugin
 
@@ -108,7 +108,6 @@ Or export it to GEFF.
 ```python
 tracked.write_solution_geff("path/to/solution.geff")
 ```
-
 
 ### Extracting Detections
 
