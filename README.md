@@ -33,6 +33,8 @@ If you wish to use the `napari` plugin functionality, use `pip install tracktour
 
 ⚠️More detail coming soon! The plugin is a proof-of-concept only.⚠️
 
+https://github.com/user-attachments/assets/70e10c60-c7d9-4a8a-91af-4518271cf021
+
 `tracktour` is most easily used via its `napari` plugin interface.
 
 The plugin contains three widgets for interacting with your data:
