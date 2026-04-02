@@ -59,14 +59,14 @@ packages = ["src"]
 [project.optional-dependencies]
 napari = [
     "matplotlib",
-    "napari<0.7.0",
+    "napari",
     "napari-geff",
     "napari-matplotlib",
     "superqt"
 ]
 test = [
     "pytest>=6.0",
-    "napari[all,testing]<0.7.0",
+    "napari[all,testing]",
     "tracktour[napari]"
 ]
 dev = ["pre-commit"]
