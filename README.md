@@ -8,7 +8,9 @@
 `tracktour` is a simple object tracker based on a network flow linear model. `tracktour` takes a dataframe of detected objects and solves a linear program
 (currently using Gurobi, but we will soon add an open source solver interface) to produce tracking results.
 
-`tracktour` is rapidly changing and its API will change without deprecation warnings.
+`tracktour` is also a `napari` plugin! The plugin allows you to solve, curate and evaluate your solution using three main widgets, as described below.
+
+⚠️ `tracktour` is currently under construction! Its API may change without deprecation warnings.⚠️
 
 ## About `tracktour`
 
@@ -23,15 +25,25 @@ returned to the user for inspection.
 `tracktour` is available as a pip-installable Python package. Running `pip install tracktour` in a virtual environment will install all
 required dependencies, but you will need a separate Gurobi Optimizer installation (instructions [here](https://support.gurobi.com/hc/en-us/articles/4534161999889-How-do-I-install-Gurobi-Optimizer)).
 
-`tracktour` is tested with all Python versions >=3.8.
+`tracktour` is tested with all Python versions >=3.11.
 
-**Note** - If you wish to visualize data with `napari` (e.g. as per the Cell Tracking Challenge [example](./examples/build_and_solve_ctc.ipynb)), you will need to separately install it.
+If you wish to use the `napari` plugin functionality, use `pip install tracktour[napari]`.
 
-## Support
+## napari Plugin
 
-Please feel free to open issues with feature requests, bug reports, questions on usage, etc.
+⚠️More detail coming soon! The plugin is a proof-of-concept only.⚠️
 
-## Usage
+`tracktour` is most easily used via its `napari` plugin interface.
+
+The plugin contains three widgets for interacting with your data:
+
+- `Track Solver`: takes a segmentation or points layer and produces your tracking solution.
+- `Merge Explorer`: if you allowed your tracks to merge, the Merge Explorer takes you through each merge and allows you to correct them by marking the parents as exiting the frame, or adding new cells that were missed in the segmentation/detection step.
+- `Track Annotator`: allows you to pick a sampling strategy and guides you through annotating and correcting ground truth tracks based on your solution. You're shown one edge at a time, with the filled point representing the source, and the hollow point representing the target. You can move either the source or target point around the image to repair the edge. You can also delete either point to signify no incoming/outgoing edge.
+
+After solving, or curating your solution, you can export it to GEFF at any time from each of the widgets. You can then read the solution back in using `napari-geff`.
+
+## Python Usage
 
 The `Tracker` object is the interface for producing tracking solutions. Below is a toy example with explicitly defined detections.
 
@@ -73,8 +85,6 @@ You may want to convert the solution into a networkx graph for easier manipulati
 solution_graph = tracked.as_nx_digraph()
 ```
 
-See the [toy example](./examples/toy.py) for a complete script, and the [CTC example](./examples/build_and_solve_ctc.ipynb) for visualization in `napari`.
-
 ### Extracting Detections
 
 If you're starting from an image segmentation, you can use the `get_im_centers` or `extract_im_centers` functions.
@@ -92,17 +102,10 @@ the segmentation as a numpy array.
 seg, detections, min_t, max_t, corners = get_im_centers('path/to/01_RES/')
 ```
 
-**Note:** If using the `ctc` utilities, detections will be extracted for you.
+## Support
 
-### Cell Tracking Challenge
+Please feel free to open issues with feature requests, bug reports, questions on usage, etc.
 
-If you're working with Cell Tracking Challenge formatted datasets, see [the example notebook](./examples/build_and_solve_ctc.ipynb) for producing and visualizing tracks.
-
-You can also use the CLI at the command-line to extract detections, run tracktour, and save output in CTC format.
-
-```sh
-# run tracktour with k-neighbours=8
-$ tracktour ctc /path/to/seg/ /path/to/save/ -k 8
-```
+## Cell Tracking Challenge
 
 **Note**: Tracktour was recently submitted to the Cell Tracking Challenge. To use the submission version specifically, install `tracktour==0.0.4`.
