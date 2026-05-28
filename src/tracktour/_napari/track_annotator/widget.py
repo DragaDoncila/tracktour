@@ -56,6 +56,9 @@ _EDGE_NON_FEATURE_COLS = frozenset(
     }
 )
 
+# Features where large values indicate errors — toggle defaults to large→error (descending).
+_LARGE_IS_ERROR_FEATURES = frozenset({"distance", "chosen_neighbour_rank"})
+
 EDGE_FOCUS_POINT_NAME = "Source Target"
 EDGE_FOCUS_VECTOR_NAME = "Current Edge"
 GT_TRACKS_NAME = "Ground Truth Tracks"
@@ -123,6 +126,7 @@ class TrackAnnotator(QWidget):
 
         # D-UCB sampler state
         self._ducb_nxg = None
+        self._original_nxg = None
         self._feature_rows: list[tuple] = []  # (col_name, QCheckBox, QToggleSwitch)
 
         # Precision estimation state
@@ -233,6 +237,13 @@ class TrackAnnotator(QWidget):
         self._previous_edge_button.enabled = False
         self._annotation_errors = []
         self._estimate_precision_button.enabled = False
+
+        # reset D-UCB state for the new layer
+        self._ducb_nxg = None
+        self._build_feature_table([])
+        self._edges_status_label.setText("No edges loaded")
+        self._apply_sampler_button.enabled = False
+        self._compute_features_button.native.setVisible(False)
 
         # auto-populate D-UCB feature table if layer has tracked metadata
         self._try_load_edges_from_layer()
@@ -1000,6 +1011,10 @@ class TrackAnnotator(QWidget):
 
         self._edges_status_label = QLabel("No edges loaded")
 
+        self._compute_features_button = PushButton(text="Compute Features")
+        self._compute_features_button.clicked.connect(self._compute_features_for_ducb)
+        self._compute_features_button.native.setVisible(False)
+
         self._feature_scroll = QScrollArea()
         self._feature_scroll.setWidgetResizable(True)
         self._feature_scroll.setMaximumHeight(240)
@@ -1015,6 +1030,7 @@ class TrackAnnotator(QWidget):
         self._apply_sampler_button.enabled = False
 
         ducb_layout.addWidget(self._edges_status_label)
+        ducb_layout.addWidget(self._compute_features_button.native)
         ducb_layout.addWidget(self._feature_scroll)
         ducb_layout.addWidget(self._apply_sampler_button.native)
         self._ducb_config_widget.setLayout(ducb_layout)
@@ -1038,13 +1054,21 @@ class TrackAnnotator(QWidget):
         # Trajectory and Random both use _apply_random_button (shared "Apply" button)
 
     def _try_load_edges_from_layer(self):
-        """Auto-populate feature table from tracked metadata if available."""
+        """Auto-populate feature table from tracked metadata if available.
+
+        Falls back to showing the Compute Features button for plain tracks layers.
+        """
         if self._track_combo.value is None:
             return
         if nxg := self._track_combo.value.metadata.get("nxg"):
+            self._compute_features_button.native.setVisible(False)
             self._populate_edges(nxg, source=self._track_combo.value.name)
+        elif self._original_nxg is not None:
+            self._compute_features_button.native.setVisible(True)
+            self._sampler_settings.expand(animate=False)
 
     def _populate_edges(self, nxg, source=""):
+        self._compute_features_button.native.setVisible(False)
         self._ducb_nxg = nxg
         if nxg.number_of_edges() > 0:
             sample_attrs = next(iter(nxg.edges(data=True)))[2]
@@ -1058,6 +1082,64 @@ class TrackAnnotator(QWidget):
         self._build_feature_table(feature_cols)
         self._apply_sampler_button.enabled = m > 0
         self._sampler_settings.expand(animate=False)
+
+    def _compute_features_for_ducb(self):
+        if self._original_nxg is None:
+            show_info("No tracks layer loaded.")
+            return
+        self._compute_nxg_features(self._original_nxg)
+        source = self._track_combo.value.name if self._track_combo.value else ""
+        self._populate_edges(self._original_nxg, source=source)
+
+    @staticmethod
+    def _compute_nxg_features(nxg, n_neighbors=10):
+        """Compute distance, chosen_neighbour_rank, and softmax for all edges.
+
+        Uses per-frame KDTrees (same approach as Tracker) to limit candidates
+        to the n_neighbors nearest nodes rather than all detections in the frame.
+        """
+        from collections import defaultdict
+
+        from scipy.spatial import KDTree
+
+        sample_attrs = next(iter(nxg.nodes(data=True)))[1]
+        loc_keys = ["z", "y", "x"] if "z" in sample_attrs else ["y", "x"]
+
+        nodes_by_frame: dict[int, list] = defaultdict(list)
+        for node_id, attrs in nxg.nodes(data=True):
+            nodes_by_frame[int(attrs["t"])].append(node_id)
+
+        # (node_id_list, KDTree) per frame
+        frame_trees: dict[int, tuple] = {}
+        for t, node_ids in nodes_by_frame.items():
+            pos = np.array([[nxg.nodes[n][key] for key in loc_keys] for n in node_ids])
+            frame_trees[t] = (node_ids, KDTree(pos))
+
+        for u, v in nxg.edges():
+            u_pos = np.array([nxg.nodes[u][key] for key in loc_keys])
+            v_pos = np.array([nxg.nodes[v][key] for key in loc_keys])
+            d_uv = float(np.linalg.norm(v_pos - u_pos))
+            nxg.edges[u, v]["distance"] = d_uv
+
+            t_v = int(nxg.nodes[v]["t"])
+            node_ids_in_frame, tree = frame_trees[t_v]
+            k_actual = min(n_neighbors, tree.n)
+            dists, idxs = tree.query(u_pos, k=k_actual if k_actual > 1 else [1])
+            dists = np.atleast_1d(dists)
+            idxs = np.atleast_1d(idxs)
+            neighbours = [node_ids_in_frame[i] for i in idxs]
+
+            # Always include v in candidates (handles non-tracktour tracks layers)
+            if v not in neighbours:
+                neighbours.append(v)
+                dists = np.append(dists, d_uv)
+
+            nxg.edges[u, v]["chosen_neighbour_rank"] = int(np.sum(dists < d_uv))
+
+            exp_vals = np.exp(-dists)
+            nxg.edges[u, v]["softmax"] = float(
+                exp_vals[neighbours.index(v)] / exp_vals.sum()
+            )
 
     def _build_feature_table(self, feature_cols):
         from superqt import QToggleSwitch
@@ -1077,7 +1159,7 @@ class TrackAnnotator(QWidget):
             use_cb = QCheckBox()
             use_cb.setChecked(True)
             toggle = QToggleSwitch()
-            toggle.setChecked(False)  # off = ascending (small → error)
+            toggle.setChecked(col in _LARGE_IS_ERROR_FEATURES)  # on = large → error
 
             row_layout.addWidget(QLabel(col))
             row_layout.addStretch()
@@ -1130,6 +1212,7 @@ class TrackAnnotator(QWidget):
         self._sampler_type_combo.enabled = False
         self._apply_random_button.enabled = False
         self._apply_sampler_button.enabled = False
+        self._compute_features_button.enabled = False
         for _col, use_cb, toggle in self._feature_rows:
             use_cb.setEnabled(False)
             toggle.setEnabled(False)
