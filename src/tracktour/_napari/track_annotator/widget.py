@@ -516,7 +516,7 @@ class TrackAnnotator(QWidget):
         for layer in self._viewer.layers:
             if layer.visible:
                 if type(layer).__name__ == "Image":
-                    layer.projection_mode = "MEAN"
+                    layer.projection_mode = "NONE"
 
     def _display_next_edge(self):
         current_edge = self._edge_sampler.current()
