@@ -43,7 +43,7 @@ def condensed_to_square(pdist_i, num_children):
 
 def closest_neighbour_child_cost(detections, location_keys, edge_df):
     # TODO: assumes groups in groupby are positioned by order in detections
-    location_col_indices = [detections.columns.get_loc(key) for key in location_keys]
+    loc_values = detections[list(location_keys)].to_numpy()
     edges_by_source = edge_df.groupby("u")
     divisible_detections = detections[detections.t < detections.t.max()]
     det_outgoing_edges = zip(divisible_detections.itertuples(), edges_by_source)
@@ -51,27 +51,20 @@ def closest_neighbour_child_cost(detections, location_keys, edge_df):
     for det_row, (group_source, edge_group) in det_outgoing_edges:
         assert det_row.Index == group_source, "Detections and edges are not aligned."
         src_coords = np.asarray([getattr(det_row, key) for key in location_keys])
-        child_coord_array = np.asarray(
-            [
-                [detections.iat[v, l] for l in location_col_indices]
-                for v in edge_group["v"].values
-            ]
-        )
+        child_indices = edge_group["v"].values
+        n_children = len(child_indices)
         # if there's only one child, node cannot divide so cost is infinite
         # TODO: just don't have these edges at all
-        if len(child_coord_array) == 1:
+        if n_children == 1:
             min_dists[det_row.Index] = math.inf
             continue
 
+        child_coord_array = loc_values[child_indices]
         dists_to_child = np.linalg.norm(src_coords - child_coord_array, axis=1)
         inter_child_dists = pdist(child_coord_array)
-        div_costs = inter_child_dists + np.asarray(
-            [
-                dists_to_child[
-                    list(condensed_to_square(i, len(child_coord_array)))
-                ].min()
-                for i in range(len(inter_child_dists))
-            ]
+        row_idx, col_idx = np.triu_indices(n_children, k=1)
+        div_costs = inter_child_dists + np.minimum(
+            dists_to_child[row_idx], dists_to_child[col_idx]
         )
         min_dists[det_row.Index] = div_costs.min()
     return min_dists
